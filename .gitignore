@@ -25,3 +25,7 @@ aidlc/spaces/*/intents/*/.aidlc-*
 aidlc/diagnostics/
 .kiro/steering/aidlc-active-memory.md
 # END AI-DLC:gitignore
+
+# Gradle build artifacts
+.gradle/
+build/
