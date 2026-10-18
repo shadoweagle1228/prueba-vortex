@@ -1,5 +1,7 @@
 # Andes Retail — Capa de Integración de Stock
 
+> **Entregable principal de la prueba técnica**: Ver [`ARCHITECTURE_DELIVERABLE.md`](./ARCHITECTURE_DELIVERABLE.md) para el documento completo de arquitectura (9 secciones + diagramas + decisiones + roadmap + liderazgo técnico).
+
 > **Walking Skeleton** — Primer incremento entregable del proyecto de modernización de la capa de interoperabilidad de Andes Retail. Un slice vertical completo que va desde el canal digital autenticado hasta el ERP legacy, pasando por rate-limiting, caché dual, circuit breaker y observabilidad completa.
 
 ---
