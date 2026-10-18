@@ -1,6 +1,6 @@
 # Andes Retail — Capa de Integración de Stock
 
-> **Entregable principal de la prueba técnica**: Ver [`ARCHITECTURE_DELIVERABLE.md`](./ARCHITECTURE_DELIVERABLE.md) para el documento completo de arquitectura (9 secciones + diagramas + decisiones + roadmap + liderazgo técnico).
+> **Documento de arquitectura completo**: Ver [`ARCHITECTURE.md`](./ARCHITECTURE.md) para el diseño detallado (9 secciones + diagramas + decisiones + roadmap + liderazgo técnico).
 
 > **Walking Skeleton** — Primer incremento entregable del proyecto de modernización de la capa de interoperabilidad de Andes Retail. Un slice vertical completo que va desde el canal digital autenticado hasta el ERP legacy, pasando por rate-limiting, caché dual, circuit breaker y observabilidad completa.
 
@@ -125,7 +125,7 @@ graph LR
 
 ## Beneficios para la Aplicación y el Negocio
 
-### 1. **Resiliencia real, no teórica**
+### 1. **Resiliencia real**
 - **Circuit Breaker** evita cascada de fallos cuando SAP se ralentiza o cae
 - **Bulkhead** aísla el pool de conexiones SAP (máx 20 concurrentes) — el resto de la app sigue viva
 - **Stale-cache** sirve el último dato conocido (hasta 1h) si ERP cae — el cliente ve stock, no error 500
@@ -164,22 +164,6 @@ graph LR
 
 ---
 
-## Cómo explicárselo a tu equipo (Guía para la presentación)
-
-### Para stakeholders no técnicos (2 minutos)
-> "Construimos el primer eslabón real que conecta nuestros canales digitales con el ERP. Antes, si el ERP se caía, el e-commerce mostraba error 500. Ahora, si el ERP falla, el sistema sirve el último stock conocido (hasta 1 hora) y avisa al cliente que el dato es 'posiblemente desactualizado'. Todo con autenticación real, rate limiting, y visibilidad completa de qué pasa en cada request."
-
-### Para desarrolladores (5 minutos)
-> "Clean Architecture verificada por ArchUnit en CI. Dominio puro (0 dependencias), puertos interfaces, adaptadores intercambiables. Resilience4j para CB/Bulkhead con métricas Prometheus. Caché dual fresh/stale con TTLs configurables. Keycloak 24 sobre Aurora para auth real. Kong para rate limiting + JWT validation en el edge. Todo desplegable con CDK + kubectl. 58 tests, 95% cobertura, ArchUnit en CI."
-
-### Para DevOps/SRE (5 minutos)
-> "EKS 1.29 Graviton3, HPA CPU 70%, NetworkPolicy restrictiva, PodDisruptionBudget, ServiceMonitor con bearer token. 18 runbooks con escalation matrix 4 niveles. SLOs con error budgets y burn-rate alerting. X-Ray tracing + Prometheus exemplars. Drift detection semanal (CDK diff + K8s diff + Helm diff). Cost optimization: Graviton3, Serverless v2, Spot-ready, Savings Plans tags."
-
-### Para Arquitectos (5 minutos)
-> "Clean Architecture verificada (ArchUnit). Domain → Application → Infrastructure (dependency rule). Puertos: StockCachePort (findFresh/findStale), ErpStockPort. ACL: SapStockMapper normaliza negativos, acota reserved ≤ available, genera ETag SHA-256. Contrato C-01: body + X-Stock-Source header. Degradación explícita: fresh → ERP → stale → fail-closed. Feature flags preparadas para stale-cache, CB, mapper v2."
-
----
-
 ## Próximos Pasos (Roadmap)
 
 | Prioridad | Iniciativa | Descripción | Esfuerzo |
@@ -200,14 +184,15 @@ graph LR
 |---|---|
 | **Código fuente** | `services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/` |
 | **Tests** | `services/stock-price-adapter/src/test/kotlin/com/andesretail/stock/` |
-| **Infra CDK** | `infra/app.py`, `infra/*_stack.py` |
+| **Infra CDK** | `infra/app.py`, `infra/network_stack.py`, `infra/security_stack.py`, `infra/data_stack.py`, `infra/compute_stack.py` |
 | **K8s Manifests** | `deploy/k8s/`, `deploy/kong/`, `deploy/k8s/monitoring/` |
 | **CI/CD** | `.github/workflows/ci.yml` |
-| **Runbooks** | `aidlc/.../operation/incident-response/runbooks.md` |
-| **Dashboards/Alarmas/SLOs** | `aidlc/.../operation/observability-setup/` |
-| **Load Test Plan** | `aidlc/.../operation/performance-validation/load-test-plan.md` |
-| **Cost Analysis** | `aidlc/.../operation/feedback-optimization/cost-analysis.md` |
-| **Drift Detection** | `aidlc/.../operation/feedback-optimization/drift-report.md` |
+| **Runbooks** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/incident-response/runbooks.md` |
+| **Dashboards/Alarmas/SLOs** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/observability-setup/` |
+| **Load Test Plan** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/performance-validation/load-test-plan.md` |
+| **Cost Analysis** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/feedback-optimization/cost-analysis.md` |
+| **Drift Detection** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/feedback-optimization/drift-report.md` |
+| **Arquitectura completa** | `ARCHITECTURE.md` |
 
 ---
 
@@ -241,18 +226,4 @@ k6 run load-test.js -e BASE_URL=https://api.andes-retail.example -e TOKEN=<jwt>
 
 ---
 
-## Contacto y Soporte
-
-| Rol | Contacto |
-|---|---|
-| **Tech Lead** | @tech-lead (Slack) |
-| **SRE Lead** | @sre-lead (Slack) |
-| **On-Call** | `@oncall` (PagerDuty `andes-oncall`) |
-| **Product Owner** | @product-owner (Slack) |
-| **Security** | @security (Slack) |
-
----
-
 > **Última actualización**: Octubre 2026 — Walking Skeleton v0.1.0
->
-> *Este documento evoluciona con el código. Si algo no cuadra, abre un PR.*
