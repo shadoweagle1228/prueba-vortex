@@ -1,0 +1,27 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: stock-price-adapter
+  namespace: andes-retail
+  labels:
+    app.kubernetes.io/name: stock-price-adapter
+    release: kube-prometheus-stack
+spec:
+  namespaceSelector:
+    matchNames:
+      - andes-retail
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stock-price-adapter
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      scheme: http
+      interval: 30s
+      scrapeTimeout: 10s
+      # El endpoint está detrás del resource server OAuth2 (fail-closed, CA-01):
+      # el token lo emite Keycloak con el scope `metrics:read` y External Secrets
+      # lo mantiene sincronizado en este Secret.
+      bearerTokenSecret:
+        name: stock-price-adapter-metrics-token
+        key: token

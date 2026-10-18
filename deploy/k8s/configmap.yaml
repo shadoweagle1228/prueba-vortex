@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stock-price-adapter-config
+  namespace: andes-retail
+  labels:
+    app.kubernetes.io/name: stock-price-adapter
+data:
+  REDIS_HOST: "andes-retail-redis.xxxxxx.0001.use1.cache.amazonaws.com"
+  REDIS_PORT: "6379"
+  OAUTH_ISSUER_URI: "https://auth.andes-retail.example/realms/andes-retail"
+  OAUTH_JWKS_URI: "https://auth.andes-retail.example/realms/andes-retail/protocol/openid-connect/certs"
+  STOCK_CACHE_FRESH_TTL_SECONDS: "60"
+  STOCK_CACHE_STALE_TTL_SECONDS: "3600"

@@ -1,0 +1,87 @@
+{
+  "realm": "andes-retail",
+  "enabled": true,
+  "sslRequired": "none",
+  "loginWithEmailAllowed": true,
+  "registrationAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "clientScopes": [
+    {
+      "name": "inventory:read",
+      "description": "Lectura de inventario y stock (FR-01, US-01)",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false",
+        "consent.screen.text": ""
+      }
+    },
+    {
+      "name": "metrics:read",
+      "description": "Scrape de /actuator/prometheus (observabilidad)",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false",
+        "consent.screen.text": ""
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "canal-ecommerce",
+      "name": "Canal e-commerce",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "canal-ecommerce-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "defaultClientScopes": ["inventory:read"],
+      "optionalClientScopes": ["metrics:read"]
+    },
+    {
+      "clientId": "canal-tienda",
+      "name": "Canal tienda física",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "canal-tienda-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": true,
+      "defaultClientScopes": ["inventory:read"],
+      "optionalClientScopes": ["metrics:read"]
+    },
+    {
+      "clientId": "operador-cli",
+      "name": "CLI de desarrollo (sin secreto)",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "defaultClientScopes": ["inventory:read"],
+      "optionalClientScopes": ["metrics:read"]
+    }
+  ],
+  "users": [
+    {
+      "username": "operador",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Operador",
+      "lastName": "Andes",
+      "email": "operador@andes-retail.example",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "operador",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

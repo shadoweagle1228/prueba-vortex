@@ -29,3 +29,15 @@ aidlc/diagnostics/
 # Gradle build artifacts
 .gradle/
 build/
+**/build/
+
+# Python / CDK
+infra/.venv/
+infra/cdk.out/
+infra/__pycache__/
+**/__pycache__/
+*.py[cod]
+
+# IDE
+.idea/
+*.iml

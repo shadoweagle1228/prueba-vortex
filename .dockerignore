@@ -1,0 +1,24 @@
+# Build outputs
+.gradle/
+build/
+**/build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Python (IaC)
+infra/.venv/
+infra/cdk.out/
+__pycache__/
+*.py[cod]
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local secrets
+*.env
+.env.local

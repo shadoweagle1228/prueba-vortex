@@ -13,6 +13,13 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
+/**
+ * Endpoint público del contrato C-01 (`GET /v1/inventory/stock/{sku}`).
+ *
+ * Responde el cuerpo exigido por el contrato (`sku`, `available`, `reserved`,
+ * `lastUpdated`, `cacheHit` y `warehouseId` opcional) y publica el origen del
+ * dato en la cabecera `X-Stock-Source`, tal como exigen BR-STK-01 y BR-STK-03.
+ */
 @RestController
 @RequestMapping("/v1/inventory")
 class StockController(
@@ -20,13 +27,19 @@ class StockController(
 ) {
 
     @GetMapping("/stock/{sku}")
-    @PreAuthorize("hasAuthority('SCOPE_stock:read')")
+    @PreAuthorize("hasAuthority('SCOPE_inventory:read')")
     fun getStock(
         @PathVariable sku: String,
         @RequestParam(name = "warehouseId", required = false, defaultValue = "W01") warehouseId: String,
     ): ResponseEntity<StockResponseDto> {
         val command = StockQueryCommand(SKU(sku), WarehouseId(warehouseId))
-        val response = getStockUseCase.execute(command)
-        return ResponseEntity.ok(response)
+        val result = getStockUseCase.execute(command)
+        return ResponseEntity.ok()
+            .header(HEADER_STOCK_SOURCE, result.source.wireName())
+            .body(result.stock)
+    }
+
+    companion object {
+        const val HEADER_STOCK_SOURCE = "X-Stock-Source"
     }
 }

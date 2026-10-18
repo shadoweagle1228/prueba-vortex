@@ -1,0 +1,78 @@
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: stock-rate-limit
+  namespace: andes-retail
+  labels:
+    app.kubernetes.io/name: stock-price-adapter
+plugin: rate-limiting
+config:
+  # NFR-11: 100 req/s por canal (consumer), con contadores globales en Redis.
+  second: 100
+  limit_by: consumer
+  policy: redis
+  fault_tolerant: true
+  hide_client_headers: false
+  redis:
+    host: andes-retail-redis.xxxxxx.0001.use1.cache.amazonaws.com
+    port: 6379
+    ssl: true
+    ssl_verify: true
+    timeout: 2000
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongClusterPlugin
+metadata:
+  name: stock-rate-limit-anonymous
+  annotations:
+    kubernetes.io/ingress.class: kong
+  labels:
+    global: "false"
+plugin: rate-limiting
+config:
+  # Red de seguridad para peticiones sin consumer identificable (p. ej. token rechazado
+  # aguas arriba): 20 req/s por IP de origen.
+  second: 20
+  limit_by: ip
+  policy: redis
+  fault_tolerant: true
+  redis:
+    host: andes-retail-redis.xxxxxx.0001.use1.cache.amazonaws.com
+    port: 6379
+    ssl: true
+    ssl_verify: true
+    timeout: 2000
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongPlugin
+metadata:
+  name: stock-jwt
+  namespace: andes-retail
+plugin: jwt
+config:
+  key_claim_name: iss
+  claims_to_verify:
+    - exp
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: stock-price-adapter
+  namespace: andes-retail
+  annotations:
+    konghq.com/plugins: stock-rate-limit,stock-jwt
+    konghq.com/strip-path: "false"
+    kubernetes.io/ingress.class: kong
+spec:
+  ingressClassName: kong
+  rules:
+    - host: api.andes-retail.example
+      http:
+        paths:
+          - path: /v1/inventory
+            pathType: Prefix
+            backend:
+              service:
+                name: stock-price-adapter
+                port:
+                  name: http

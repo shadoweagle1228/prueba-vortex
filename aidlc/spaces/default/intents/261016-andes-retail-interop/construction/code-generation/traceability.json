@@ -1,28 +1,120 @@
 {
-  "intent": "261016-andes-retail-interop",
-  "unit": "skeleton-stock-query",
-  "stage": "code-generation",
-  "steps": [
-    "1.1-1.3 scaffolding Gradle multi-modulo",
-    "2.1-2.4 IaC CDK Python (network/data/compute)",
-    "3.1-3.4 dominio VOs + StockLevel + tests TDD + puertos",
-    "4.1-4.4 aplicacion DTOs + GetStockUseCase + tests TDD + servicio",
-    "5.1-5.7 infraestructura adapters + REST + seguridad + config + filtros",
-    "6.1-6.4 tests controlador/arch/integration + Dockerfile"
+  "upstream_ids": [
+    "FR-01",
+    "FR-11",
+    "NFR-01",
+    "NFR-04",
+    "NFR-06",
+    "NFR-10",
+    "NFR-11",
+    "NFR-12",
+    "CA-01",
+    "CA-02",
+    "CA-03",
+    "US-01",
+    "US-08",
+    "BR-STK-01",
+    "BR-STK-02",
+    "BR-STK-03",
+    "BR-STK-04",
+    "BR-STK-05",
+    "BR-STK-06"
   ],
-  "artifacts": [
-    "settings.gradle.kts",
-    "build.gradle.kts",
-    "Dockerfile",
-    "services/stock-price-adapter/build.gradle.kts",
-    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/StockPriceAdapterApplication.kt",
-    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/domain/model/*.kt",
-    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/domain/port/*.kt",
-    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/application/**/*.kt",
-    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/infrastructure/**/*.kt",
-    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/web/**/*.kt",
-    "services/stock-price-adapter/src/main/resources/*.yml",
-    "services/stock-price-adapter/src/main/resources/*.xml",
-    "services/stock-price-adapter/src/test/**/*.kt"
+  "coverage": [
+    {
+      "id": "FR-01",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/web/controller/StockController.kt"
+    },
+    {
+      "id": "FR-11",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/web/security/SecurityConfig.kt"
+    },
+    {
+      "id": "NFR-01",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/application/service/GetStockService.kt"
+    },
+    {
+      "id": "NFR-04",
+      "status": "OK",
+      "target": "deploy/k8s/deployment.yaml"
+    },
+    {
+      "id": "NFR-06",
+      "status": "OK",
+      "target": "infra/data_stack.py"
+    },
+    {
+      "id": "NFR-10",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/infrastructure/erp/SapStockAdapter.kt"
+    },
+    {
+      "id": "NFR-11",
+      "status": "OK",
+      "target": "deploy/kong/kong-plugin-ratelimit.yaml"
+    },
+    {
+      "id": "NFR-12",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/infrastructure/erp/SapStockAdapter.kt"
+    },
+    {
+      "id": "CA-01",
+      "status": "OK",
+      "target": "infra/data_stack.py"
+    },
+    {
+      "id": "CA-02",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/infrastructure/erp/SapStockAdapter.kt"
+    },
+    {
+      "id": "CA-03",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/test/kotlin/com/andesretail/stock/arch/ArchitectureTest.kt"
+    },
+    {
+      "id": "US-01",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/test/kotlin/com/andesretail/stock/integration/StockAdapterIntegrationTest.kt"
+    },
+    {
+      "id": "US-08",
+      "status": "OK",
+      "target": "infra/compute_stack.py"
+    },
+    {
+      "id": "BR-STK-01",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/application/service/GetStockService.kt"
+    },
+    {
+      "id": "BR-STK-02",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/infrastructure/erp/SapStockAdapter.kt"
+    },
+    {
+      "id": "BR-STK-03",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/application/service/GetStockService.kt"
+    },
+    {
+      "id": "BR-STK-04",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/web/exception/GlobalExceptionHandler.kt"
+    },
+    {
+      "id": "BR-STK-05",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/resources/application.yml"
+    },
+    {
+      "id": "BR-STK-06",
+      "status": "OK",
+      "target": "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/infrastructure/mapper/SapStockMapper.kt"
+    }
   ]
 }

@@ -1,37 +1,89 @@
 server:
   port: 8080
+  shutdown: graceful
+  error:
+    include-message: never
 
 spring:
   application:
     name: stock-price-adapter
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
   security:
     oauth2:
       resourceserver:
         jwt:
-          issuer-uri: http://localhost:8081
-          jwk-set-uri: http://localhost:8081/.well-known/jwks.json
+          issuer-uri: ${OAUTH_ISSUER_URI:http://localhost:8081/realms/andes-retail}
+          jwks-uri: ${OAUTH_JWKS_URI:http://localhost:8081/realms/andes-retail/protocol/openid-connect/certs}
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      # Presupuesto de caché del diseño de rendimiento: acierto < 15 ms, nunca bloquea la petición.
+      timeout: 200ms
+      connect-timeout: 100ms
   jackson:
+    # JavaTimeModule se registra automáticamente (jackson-datatype-jsr310).
     serialization:
       write-dates-as-timestamps: false
     default-property-inclusion: non_null
+
+sap:
+  base-url: ${SAP_BASE_URL:http://localhost:9000}
+  # BR-STK-02 / performance-design: timeout estricto de 250 ms y conexión en 100 ms.
+  timeout-millis: 250
+  connect-timeout-millis: 100
+  max-connections: 20
+
+stock:
+  cache:
+    fresh-ttl-seconds: 60
+    stale-ttl-seconds: 3600
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      sapStockCircuitBreaker:
+        # BR-STK-02: ventana deslizante de 30 llamadas, OPEN 60 s al superar 50% de fallos.
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 30
+        minimum-number-of-calls: 10
+        failure-rate-threshold: 50
+        slow-call-duration-threshold: 250ms
+        slow-call-rate-threshold: 50
+        wait-duration-in-open-state: 60s
+        permitted-number-of-calls-in-half-open-state: 5
+        automatic-transition-from-open-to-half-open-enabled: true
+        register-health-indicator: true
+  bulkhead:
+    instances:
+      sapStockBulkhead:
+        # BR-STK-05 / NFR-12: nunca más de 20 llamadas concurrentes al ERP.
+        max-concurrent-calls: 20
+        max-wait-duration: 100ms
 
 management:
   endpoints:
     web:
       exposure:
         include: health,info,metrics,prometheus
-  tracing:
-    sampling:
-      probability: 1.0
+  endpoint:
+    health:
+      show-details: when-authorized
+      probes:
+        enabled: true
+      group:
+        # La caché es best-effort (BR-STK-01): un Redis caído degrada a consulta
+        # directa al ERP, así que no debe expulsar al pod del Service.
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState
+  health:
+    circuitbreakers:
+      enabled: true
 
 logging:
   level:
+    root: INFO
     com.andesretail.stock: INFO
-    org.springframework.security: INFO
-    org.springframework.web: INFO
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%X{correlationId}] %-5level %logger{36} - %msg%n"

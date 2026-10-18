@@ -1,0 +1,83 @@
+apiVersion: v1
+kind: NetworkPolicy
+metadata:
+  name: stock-price-adapter
+  namespace: andes-retail
+  labels:
+    app.kubernetes.io/name: stock-price-adapter
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: stock-price-adapter
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Único camino de entrada: el proxy de Kong (rate limiting por canal, NFR-11).
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kong
+      ports:
+        - protocol: TCP
+          port: 8080
+    # El scraper de Prometheus necesita alcanzar /actuator/prometheus, que además
+    # exige el bearer con scope `metrics:read`.
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    # DNS del clúster
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Identidad: el issuer OIDC se resuelve por el proxy de Kong, no por Internet directo.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kong
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+    # Redis (ElastiCache) dentro de la VPC, con TLS en tránsito (NFR-06)
+    - to:
+        - ipBlock:
+            cidr: 10.0.0.0/16
+      ports:
+        - protocol: TCP
+          port: 6379
+    # SAP on-premise y proveedores externos
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 169.254.169.254/32
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 9000
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: stock-price-adapter
+  namespace: andes-retail
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stock-price-adapter

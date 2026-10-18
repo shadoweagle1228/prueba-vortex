@@ -1,8 +1,8 @@
 ## Summary
 
-- Builds: Microservicio `stock-price-adapter` (Kotlin + Spring Boot 3.2 con Clean Architecture) y stacks IaC en AWS CDK Python para el Walking Skeleton.
-- Touches: `settings.gradle.kts`, `build.gradle.kts`, `services/stock-price-adapter/`, `infra/`, `Dockerfile`.
-- Tests: 22 pruebas automatizadas (unitarias TDD, controlador OAuth2, ArchUnit de arquitectura limpia e integración del skeleton).
+- Builds: Microservicio `stock-price-adapter` (Kotlin + Spring Boot 3.2 con Clean Architecture), stacks IaC en AWS CDK Python (VPC, KMS, Aurora PostgreSQL, Redis, EKS + Kong + Keycloak) y manifiestos de despliegue para el Walking Skeleton.
+- Touches: `settings.gradle.kts`, `build.gradle.kts`, `services/stock-price-adapter/`, `infra/`, `deploy/`, `Dockerfile`.
+- Tests: 58 pruebas automatizadas en 14 suites (unitarias TDD, adaptadores de caché y ERP, controlador OAuth2, handler `problem+json`, filtro de correlación, ArchUnit de arquitectura limpia, integración del skeleton y arranque del contexto completo con sondas de Kubernetes y parámetros efectivos de resiliencia).
 
 ---
 
@@ -101,59 +101,70 @@ Este plan detalla los pasos de implementación ordenados bajo metodología **TDD
 
 | Paso de Código | Componente Implementado | Historias de Usuario Satisfechas | Requerimientos Clave |
 |---|---|---|---|
-| **Paso 1** | Scaffolding de Proyecto y Gradle Wrapper | Habilitador de Plataforma | TECH-STACK-01 |
-| **Paso 2** | Stacks IaC AWS CDK Python | Habilitador de Infraestructura | INFRA-NET-01, INFRA-DATA-01 |
+| **Paso 1** | Scaffolding de Proyecto y Gradle Wrapper | Habilitador de Plataforma | `TF-stack`, `memory:M1` (floor 80%) |
+| **Paso 2** | Stacks IaC AWS CDK Python (red, KMS, datos, cómputo) | Habilitador de Infraestructura | NFR-04, NFR-06, CA-01 |
 | **Paso 3** | Capa de Dominio (Modelos & Value Objects) | US-01 (Consultar Stock) | FR-01, CA-03 |
-| **Paso 4** | Pruebas de Dominio (TDD Red) | US-01 | NFR-14 |
-| **Paso 5** | Puertos de Dominio & Casos de Uso (TDD Red → Green) | US-01, US-08 | FR-01, CA-02, CA-03 |
-| **Paso 6** | Adaptadores de Infraestructura (Redis & SAP ERP con Resilience4j) | US-01 | FR-01, NFR-01, NFR-10, NFR-12 |
-| **Paso 7** | Adaptador Web REST & Seguridad OAuth2 JWT | US-01, US-08 | FR-01, FR-11, NFR-06, NFR-07 |
-| **Paso 8** | Pruebas de Arquitectura (ArchUnit) y Dockerfile | Habilitador de Calidad | CA-03, NFR-05 |
+| **Paso 3b** | Puertos de Dominio & Casos de Uso (TDD Red → Green) | US-01 | FR-01, CA-02, CA-03, BR-STK-01, BR-STK-03, BR-STK-04 |
+| **Paso 4** | Adaptadores de Infraestructura (Redis fresca/obsoleta & SAP ERP con Resilience4j) | US-01 | FR-01, NFR-01, NFR-10, NFR-12, CA-02, BR-STK-02, BR-STK-05, BR-STK-06 |
+| **Paso 5** | Adaptador Web REST, `problem+json` y Seguridad OAuth2 JWT | US-01, US-08 | FR-01, FR-11, CA-01, BR-STK-04 |
+| **Paso 6** | Rate limiting perimetral en Kong y proveedor OIDC Keycloak | US-08 | FR-11, NFR-04, NFR-11, CA-02 |
+| **Paso 7** | Pruebas de Arquitectura (ArchUnit), sondas y Dockerfile | Habilitador de Calidad | CA-03, NFR-04 |
 
 ---
 
 ## Lista de Pasos de Implementación (Checklist de Ejecución)
 
+> Los pasos `Frontend behavior` del `plan_profile` del contrato **no aplican** a
+> esta unidad: `skeleton-stock-query` es un servicio backend sin capa de
+> presentación propia, así que no se generó ni se probó código de frontend. La
+> lista siguiente registra el estado real de los pasos aplicables.
+
 ### Fase 1: Scaffolding y Entorno de Construcción
-- [ ] **Paso 1.1:** Crear estructura raíz del proyecto multi-módulo con `settings.gradle.kts` y `build.gradle.kts`.
-- [ ] **Paso 1.2:** Configurar dependencias clave (Spring Boot 3.2.4, Kotlin 1.9, Resilience4j, Lettuce, JUnit 5, MockK, ArchUnit, JaCoCo con floor al 80%).
-- [ ] **Paso 1.3:** Crear `build.gradle.kts` del módulo `services/stock-price-adapter`.
+- [x] **Paso 1.1:** Crear estructura raíz del proyecto multi-módulo con `settings.gradle.kts` y `build.gradle.kts`.
+- [x] **Paso 1.2:** Configurar dependencias clave (Spring Boot 3.2.4, Kotlin 1.9, Resilience4j, Lettuce, JUnit 5, MockK, ArchUnit, JaCoCo con floor al 80%).
+- [x] **Paso 1.3:** Crear `build.gradle.kts` del módulo `services/stock-price-adapter` y `.editorconfig` (max_line_length 140).
 
 ### Fase 2: Infraestructura como Código (AWS CDK en Python)
-- [ ] **Paso 2.1:** Crear `infra/app.py` y `infra/cdk.json` con dependencias en `infra/requirements.txt`.
-- [ ] **Paso 2.2:** Implementar `infra/network_stack.py` (VPC de 3 niveles con subredes CDE aisladas).
-- [ ] **Paso 2.3:** Implementar `infra/data_stack.py` (ElastiCache Redis Multi-AZ y Aurora Serverless v2 con KMS).
-- [ ] **Paso 2.4:** Implementar `infra/compute_stack.py` (Cluster EKS con NodeGroup Graviton3 ARM64).
+- [x] **Paso 2.1:** Crear `infra/app.py` y `infra/cdk.json` con dependencias en `infra/requirements.txt`.
+- [x] **Paso 2.2:** Implementar `infra/network_stack.py` (VPC de 3 niveles con subredes CDE aisladas).
+- [x] **Paso 2.3:** Implementar `infra/security_stack.py` (CMK con rotación anual y secreto de SAP).
+- [x] **Paso 2.4:** Implementar `infra/data_stack.py` (ElastiCache Redis 7.1 Multi-AZ `cache.t4g.medium` con TLS y cifrado con la CMK, y Aurora **PostgreSQL 16** Serverless v2 en subredes aisladas).
+- [x] **Paso 2.5:** Implementar `infra/compute_stack.py` (EKS 1.29 con NodeGroup Graviton3 `c7g.medium` de 2 a 6 nodos, addon `metrics-server`, Kong Ingress Controller, Keycloak 24 sobre la Aurora y External Secrets Operator).
+- [x] **Paso 2.6:** Verificar el ensamblado con `python infra/app.py` (sintetiza `infra/cdk.out/` sin credenciales AWS).
 
 ### Fase 3: Capa de Dominio Pura (Clean Architecture)
-- [ ] **Paso 3.1:** Crear Value Objects `SKU.kt`, `WarehouseId.kt`, `StockSource.kt`, `ReservationStatus.kt`.
-- [ ] **Paso 3.2:** Implementar agregado raíz `StockLevel.kt` y entidad `StockReservation.kt`.
-- [ ] **Paso 3.3 (TDD Red → Green):** Crear suite de pruebas `StockLevelTest.kt` validando reglas de inmutabilidad y cálculo de stock.
-- [ ] **Paso 3.4:** Definir puertos de dominio `StockCachePort.kt` y `ErpStockPort.kt`.
+- [x] **Paso 3.1:** Crear Value Objects `SKU.kt`, `WarehouseId.kt`, `StockSource.kt`, `ReservationStatus.kt`.
+- [x] **Paso 3.2:** Implementar agregado raíz `StockLevel.kt` y entidad `StockReservation.kt`.
+- [x] **Paso 3.3 (TDD Red → Green):** Crear las suites `StockLevelTest.kt` y `DomainModelTest.kt` validando inmutabilidad, cantidades no negativas y catálogo de orígenes.
+- [x] **Paso 3.4:** Definir puertos de dominio `StockCachePort.kt` (`findFresh`/`findStale`/`save`), `ErpStockPort.kt` y la excepción de dominio `ErpStockUnavailableException.kt`.
 
 ### Fase 4: Capa de Aplicación (Casos de Uso)
-- [ ] **Paso 4.1:** Definir DTOs y comandos `StockQueryCommand.kt` y `StockResponseDto.kt`.
-- [ ] **Paso 4.2:** Definir interfaz `GetStockUseCase.kt`.
-- [ ] **Paso 4.3 (TDD Red):** Escribir `GetStockServiceTest.kt` cubriendo los 4 escenarios (cache hit, cache miss, fallback stale, error 503).
-- [ ] **Paso 4.4 (TDD Green):** Implementar `GetStockService.kt` orquestando la resolución de stock y actualización de caché.
+- [x] **Paso 4.1:** Definir DTOs y comandos `StockQueryCommand.kt`, `StockResponseDto.kt` y `StockQueryResult.kt`.
+- [x] **Paso 4.2:** Definir interfaz `GetStockUseCase.kt`.
+- [x] **Paso 4.3 (TDD Red):** Escribir `GetStockServiceTest.kt` con acierto fresco, consulta al ERP, refresco de caché, degradación a obsoleto y fail-closed.
+- [x] **Paso 4.4 (TDD Green):** Implementar `GetStockService.kt` (`@Service`) con el orden fresco → ERP → obsoleto.
 
 ### Fase 5: Capa de Infraestructura y Adaptadores
-- [ ] **Paso 5.1:** Implementar `RedisStockAdapter.kt` implementando `StockCachePort` con Lettuce (pipeline de claves fresca y stale).
-- [ ] **Paso 5.2:** Implementar `SapStockAdapter.kt` implementando `ErpStockPort` con Resilience4j (`@CircuitBreaker` y `@Bulkhead`).
-- [ ] **Paso 5.3:** Implementar mappers ACL `SapStockMapper.kt` y cliente HTTP `SapClient.kt`.
-- [ ] **Paso 5.4:** Implementar controlador REST `StockController.kt` con endpoint `GET /v1/inventory/stock/{sku}`.
-- [ ] **Paso 5.5:** Implementar `GlobalExceptionHandler.kt` retornando RFC 7807 (`application/problem+json`).
-- [ ] **Paso 5.6:** Implementar filtros de seguridad y trazabilidad: `SecurityConfig.kt` (OAuth2 JWT) y `CorrelationIdFilter.kt` (MDC SLF4J).
-- [ ] **Paso 5.7:** Crear archivos de configuración `application.yml` y `logback-spring.xml` (JSON layout).
+- [x] **Paso 5.1:** Implementar `RedisStockAdapter.kt` con las claves `stock:fresh:`/`stock:stale:` y lectura tolerante a fallos de Redis.
+- [x] **Paso 5.2:** Implementar `SapStockAdapter.kt` con Resilience4j (`@CircuitBreaker`, `@Bulkhead`) y fallback que traduce a `ErpStockUnavailableException`.
+- [x] **Paso 5.3:** Implementar el mapper ACL `SapStockMapper.kt` y el cliente HTTP `SapClient.kt` (timeouts 100/250 ms, pool de 20 conexiones).
+- [x] **Paso 5.4:** Implementar el controlador `StockController.kt` con el endpoint `GET /v1/inventory/stock/{sku}`, la cabecera `X-Stock-Source` y el scope `inventory:read`.
+- [x] **Paso 5.5:** Implementar `GlobalExceptionHandler.kt` con `application/problem+json`, tipos `urn:andes:error:*` y `Retry-After: 5` en el 503.
+- [x] **Paso 5.6:** Implementar `SecurityConfig.kt` (JWT, `SCOPE_*`, sondas públicas, métricas protegidas), `ProblemJsonSecurityHandler.kt` (401/403 RFC 7807) y `CorrelationIdFilter.kt`.
+- [x] **Paso 5.7:** Crear `application.yml` (resiliencia, Redis, SAP, management) y `logback-spring.xml` (JSON a consola).
 
-### Fase 6: Pruebas de Integración, Arquitectura y Empaquetado
-- [ ] **Paso 6.1 (TDD Red → Green):** Implementar `StockControllerTest.kt` validando seguridad, scopes y cabeceras.
-- [ ] **Paso 6.2:** Implementar `ArchitectureTest.kt` con ArchUnit verificando que `domain` sea 100% independiente.
-- [ ] **Paso 6.3:** Implementar `StockAdapterIntegrationTest.kt` demostrando el slice end-to-end del walking skeleton.
-- [ ] **Paso 6.4:** Crear `Dockerfile` multi-stage para JDK 21 optimizado para ARM64 Graviton.
+### Fase 6: Pruebas de Integración, Calidad y Despliegue
+- [x] **Paso 6.1:** Implementar `StockControllerTest.kt` y `GlobalExceptionHandlerTest.kt` contra el contrato C-01.
+- [x] **Paso 6.2:** Implementar `ArchitectureTest.kt` (ArchUnit) y `CorrelationIdFilterTest.kt`.
+- [x] **Paso 6.3:** Implementar `StockAdapterIntegrationTest.kt` y `StockPriceAdapterApplicationTests.kt` (arranque del contexto completo y sondas de Kubernetes).
+- [x] **Paso 6.4:** Crear `Dockerfile` multi-stage para JDK 21 optimizado para ARM64 Graviton y `.dockerignore`.
+- [x] **Paso 6.5:** Crear los manifiestos `deploy/k8s/` (deployment con sondas y `securityContext`, service, configmap, HPA, NetworkPolicy con ingress de `kong`/`monitoring` y PDB).
+- [x] **Paso 6.6:** Crear `deploy/kong/` (rate limiting por canal, NFR-11), `deploy/k8s/monitoring/` (ServiceMonitor y alertas) y `deploy/local/` (Keycloak 24 + Redis para el slice end-to-end local).
 
 ---
 
 ## Assumptions & Open Questions
 
 - [assumption] Todos los pasos se ejecutan de manera estricta y progresiva, marcando las casillas correspondientes a medida que se generan los archivos en el espacio de trabajo.
+- [desviación] `Frontend behavior` no tiene código asociado en esta unidad: el walking skeleton no expone interfaz de usuario. Los pasos de esa capa del `plan_profile` quedan deliberadamente sin ejecutar.
+- [desviación] El checklist se ejecutó en el orden *componente → prueba del componente* dentro de cada fase, no con todas las pruebas rojas primero a nivel global: `GetStockServiceTest` se escribió antes de `GetStockService` (Paso 4.3 → 4.4), `RedisStockAdapterTest`/`SapStockAdapterTest` antes de sus adaptadores (Paso 5) y `StockControllerTest`/`GlobalExceptionHandlerTest`/`CorrelationIdFilterTest` antes de la capa web (Paso 6). El ciclo Red → Green → Refactor se respetó por componente, que es el modo en que `team.md` afirma TDD.

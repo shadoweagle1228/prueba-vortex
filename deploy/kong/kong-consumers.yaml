@@ -1,0 +1,56 @@
+# Un KongConsumer por canal externo: el rate limiting se aplica por consumer
+# (`limit_by: consumer`), de modo que el límite de un canal no afecta a otro
+# (criterio de verificación de NFR-11).
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: canal-ecommerce
+  namespace: andes-retail
+  annotations:
+    kubernetes.io/ingress.class: kong
+username: canal-ecommerce
+credentials:
+  - canal-ecommerce-jwt
+---
+apiVersion: configuration.konghq.com/v1
+kind: KongConsumer
+metadata:
+  name: canal-tienda
+  namespace: andes-retail
+  annotations:
+    kubernetes.io/ingress.class: kong
+username: canal-tienda
+credentials:
+  - canal-tienda-jwt
+---
+# Credenciales JWT de Kong. La clave se compara contra el claim `iss` del token
+# emitido por Keycloak (`key_claim_name: iss` en el plugin `stock-jwt`), que es lo
+# que asocia cada petición al canal correcto. La clave HS256 es sólo para que Kong
+# pueda validar la firma del emisor: en producción el token lo firma Keycloak.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: canal-ecommerce-jwt
+  namespace: andes-retail
+  labels:
+    konghq.com/credential: jwt
+type: Opaque
+stringData:
+  kongCredType: jwt
+  key: https://auth.andes-retail.example/realms/andes-retail
+  algorithm: HS256
+  secret: canal-ecommerce
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: canal-tienda-jwt
+  namespace: andes-retail
+  labels:
+    konghq.com/credential: jwt
+type: Opaque
+stringData:
+  kongCredType: jwt
+  key: https://auth.andes-retail.example/realms/andes-retail
+  algorithm: HS256
+  secret: canal-tienda
