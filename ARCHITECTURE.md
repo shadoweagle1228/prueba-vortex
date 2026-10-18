@@ -45,7 +45,7 @@ AndesRetail opera con integraciones punto a punto entre ERP SAP (on-prem), WMS, 
 
 ## 2. Preguntas, Supuestos y Riesgos
 
-### Preguntas al cliente (mín. 8)
+### Preguntas al cliente
 
 | # | Pregunta | Por qué la hacemos |
 |---|---|---|
@@ -60,7 +60,7 @@ AndesRetail opera con integraciones punto a punto entre ERP SAP (on-prem), WMS, 
 | 9 | ¿Hay regulaciones específicas (PCI-DSS, GDPR, locales)? | Define CDE isolation, PII handling, auditoría |
 | 10 | ¿Qué sistemas serán los próximos a integrar? (WMS, OMS, CRM roadmap) | Define patrón de extensibilidad |
 
-### Supuestos (mín. 8)
+### Supuestos
 
 | # | Supuesto | Justificación |
 |---|---|---|
@@ -75,7 +75,7 @@ AndesRetail opera con integraciones punto a punto entre ERP SAP (on-prem), WMS, 
 | 9 | Kafka disponible o se puede aprovisionar en EKS | Event-driven para webhooks/órdenes |
 | 10 | PCI-DSS Level 1 no aplica (Level 2/3 o SAQ) | CDE isolation suficiente, no tokenización completa |
 
-### Riesgos (mín. 5)
+### Riesgos
 
 | # | Riesgo | Impacto | Mitigación |
 |---|---|---|---|
@@ -315,7 +315,7 @@ graph LR
 ```http
 GET /v1/inventory/stock/{sku}?warehouseId=W01
 Authorization: Bearer <jwt con scope inventory:read>
-X-Correlation-ID: <uuid-v4> (opcional, generado si no viene)
+X-Correlation-ID: <uuid-v4>
 
 HTTP/1.1 200 OK
 Content-Type: application/json
@@ -345,8 +345,8 @@ X-Correlation-ID: <uuid-v4>
 ```http
 POST /v1/orders
 Authorization: Bearer <jwt con scope orders:write>
-Idempotency-Key: <uuid-v4> (obligatorio)
-X-Correlation-ID: <uuid-v4> (opcional)
+Idempotency-Key: <uuid-v4>
+X-Correlation-ID: <uuid-v4>
 
 {
   "customerId": "CUST-456",
@@ -588,7 +588,7 @@ graph LR
 }
 ```
 
-### 7.2 Métricas (mín. 10)
+### 7.2 Métricas
 
 | # | Métrica | Tipo | Descripción | Alerta |
 |---|---|---|---|---|
@@ -613,7 +613,7 @@ graph LR
 - **Exemplars**: Prometheus métricas con `traceId` adjunto → click en gráfico → salta a trace
 - **Sampling**: 100% errors, 10% success, 50% slow requests (>300ms)
 
-### 7.4 Alertas (mín. 6)
+### 7.4 Alertas
 
 | # | Alarm ID | Métrica | Condición | Severidad | Acción |
 |---|---|---|---|---|---|
