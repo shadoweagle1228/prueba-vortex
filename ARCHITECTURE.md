@@ -95,38 +95,30 @@ AndesRetail opera con integraciones punto a punto entre ERP SAP (on-prem), WMS, 
 ### 3.1 Diagrama de Contexto (C4 Level 1)
 
 ```mermaid
-graph TB
-    subgraph "Actores Externos"
-        EC[E-commerce Web/App]
-        MK[Marketplaces Externos]
-        OPS[Operador Interno]
-    end
+flowchart TB
+    EC["E-commerce Web/App"]
+    MK["Marketplaces Externos"]
+    OPS["Operador Interno"]
 
-    subgraph "Capa de Interoperabilidad (AWS EKS)"
-        GW[Kong API Gateway<br/>Rate Limit + Auth + Routing]
-        INT[Integration Layer<br/>Clean Architecture<br/>Stock, Pricing, Orders, Events]
-        CACHE[(Redis ElastiCache<br/>Fresh + Stale Cache)]
-        MQ[(Kafka<br/>Event Bus)]
-    end
+    GW["Kong API Gateway<br/>Rate Limit + Auth + Routing"]
+    INT["Integration Layer<br/>Clean Architecture<br/>Stock, Pricing, Orders, Events"]
+    CACHE[("Redis ElastiCache<br/>Fresh + Stale Cache")]
+    MQ[("Kafka<br/>Event Bus")]
 
-    subgraph "Sistemas Legacy"
-        ERP[ERP SAP<br/>Stock Contable, Precios]
-        WMS[WMS<br/>Fulfillment, Reservas]
-        OMS[OMS<br/>Órdenes, Estado]
-        CRM[CRM<br/>Clientes, Fidelización]
-    end
+    ERP["ERP SAP<br/>Stock Contable, Precios"]
+    WMS["WMS<br/>Fulfillment, Reservas"]
+    OMS["OMS<br/>Ordenes, Estado"]
+    CRM["CRM<br/>Clientes, Fidelizacion"]
 
-    subgraph "Servicios Externos"
-        PAY[Pasarela de Pagos<br/>Stripe/MercadoPago]
-    end
+    PAY["Pasarela de Pagos<br/>Stripe/MercadoPago"]
 
     EC -->|HTTPS + JWT| GW
     MK -->|HTTPS + JWT| GW
-    OPS -->|HTTPS + JWT<|end|> GW
+    OPS -->|HTTPS + JWT| GW
     GW --> INT
     INT -->|Read/Write| CACHE
     INT -->|Publish/Subscribe| MQ
-    INT -->|ACL Adapters<|end|> ERP
+    INT -->|ACL Adapters| ERP
     INT -->|ACL Adapters| WMS
     INT -->|ACL Adapters| OMS
     INT -->|ACL Adapters| CRM
@@ -207,40 +199,25 @@ graph TB
 ### 4.1 Dominios / Bounded Contexts
 
 ```mermaid
-graph TB
-    subgraph "Integration Layer (Interoperability)"
-        subgraph "Stock Context"
-            STOCK_SVC[Stock Service<br/>ACL → ERP SAP<br/>Cache Fresh/Stale<br/>CB + Bulkhead]
-        end
-
-        subgraph "Pricing Context"
-            PRICE_SVC[Pricing Service<br/>ACL → ERP SAP<br/>Cache 5min<br/>Rules Engine]
-        end
-
-        subgraph "Order Context"
-            ORDER_SVC[Order Service<br/>ACL → OMS<br/>Saga Orchestrator<br/>Idempotency]
-        end
-
-        subgraph "Customer Context"
-            CUSTOMER_SVC[Customer Service<br/>ACL → CRM<br/>Loyalty Points<br/>PII Handling]
-        end
-
-        subgraph "Payment Context"
-            PAYMENT_SVC[Payment Service<br/>ACL → Gateway<br/>Webhook Handler<br/>DLQ]
-        end
-
-        subgraph "Notification Context"
-            NOTIF_SVC[Notification Service<br/>Kafka Consumers<br/>Email/SMS/Push<br/>Templates]
-        end
+flowchart TB
+    subgraph Integ["Integration Layer"]
+        STOCK_SVC["Stock Service<br/>ACL to ERP SAP<br/>Cache Fresh/Stale<br/>CB + Bulkhead"]
+        PRICE_SVC["Pricing Service<br/>ACL to ERP SAP<br/>Cache 5min<br/>Rules Engine"]
+        ORDER_SVC["Order Service<br/>ACL to OMS<br/>Saga Orchestrator<br/>Idempotency"]
+        CUSTOMER_SVC["Customer Service<br/>ACL to CRM<br/>Loyalty Points<br/>PII Handling"]
+        PAYMENT_SVC["Payment Service<br/>ACL to Gateway<br/>Webhook Handler<br/>DLQ"]
+        NOTIF_SVC["Notification Service<br/>Kafka Consumers<br/>Email/SMS/Push<br/>Templates"]
     end
 
-    subgraph "Legacy Systems"
-        ERP[ERP SAP]
-        WMS[WMS]
-        OMS[OMS]
-        CRM[CRM]
-        PAYGW[Pasarela Pagos]
+    subgraph Legacy["Legacy Systems"]
+        ERP["ERP SAP"]
+        WMS["WMS"]
+        OMS["OMS"]
+        CRM["CRM"]
+        PAYGW["Pasarela Pagos"]
     end
+
+    KAFKA[("Kafka")]
 
     STOCK_SVC -->|ACL| ERP
     PRICE_SVC -->|ACL| ERP
@@ -248,7 +225,7 @@ graph TB
     ORDER_SVC -->|Reserve| WMS
     CUSTOMER_SVC -->|ACL| CRM
     PAYMENT_SVC -->|Webhooks| PAYGW
-    NOTIF_SVC -->|Events| KAFKA[(Kafka)]
+    NOTIF_SVC -->|Events| KAFKA
 
     style STOCK_SVC fill:#e8f5e9,stroke:#2e7d32
     style PRICE_SVC fill:#e3f2fd,stroke:#1565c0
@@ -272,28 +249,24 @@ graph TB
 ### 4.3 Patrón de Integración (ACL hacia ERP/WMS/OMS/CRM)
 
 ```mermaid
-graph LR
-    subgraph "Integration Layer"
-        PORT[Port<br/>Interface]
-        USECASE[Use Case<br/>Business Logic]
-    end
+flowchart LR
+    PORT["Port<br/>Interface"]
+    USECASE["Use Case<br/>Business Logic"]
 
-    subgraph "Infrastructure"
-        ADAPTER[Adapter<br/>Implements Port]
-        CLIENT[HTTP Client<br/>WebClient/Feign]
-        MAPPER[ACL Mapper<br/>Normalize + Validate]
-    end
+    ADAPTER["Adapter<br/>Implements Port"]
+    CLIENT["HTTP Client<br/>WebClient/Feign"]
+    MAPPER["ACL Mapper<br/>Normalize + Validate"]
 
-    subgraph "Legacy"
-        LEGACY[Legacy System<br/>ERP/WMS/OMS/CRM]
-    end
+    LEGACY["Legacy System<br/>ERP/WMS/OMS/CRM"]
+
+    DOMAIN["Domain Model"]
 
     USECASE -->|calls| PORT
     ADAPTER -->|implements| PORT
     ADAPTER --> CLIENT
     ADAPTER --> MAPPER
-    CLIENT -->|HTTP/REST/SOAP<|message|> LEGACY
-    MAPPER -->|normalize| DOMAIN[Domain Model]
+    CLIENT -->|HTTP/REST/SOAP| LEGACY
+    MAPPER -->|normalize| DOMAIN
 
     style PORT fill:#f3e5f5,stroke:#7b1fa2
     style USECASE fill:#e3f2fd,stroke:#1565c0
@@ -428,7 +401,7 @@ sequenceDiagram
     GW->>APP: Forward request + X-Correlation-ID
     APP->>APP: @PreAuthorize("hasAuthority('SCOPE_inventory:read')")
     APP->>APP: Validar payload, business rules
-    APP->>ERP: HTTP GET + Bearer token (si aplica)
+    APP->>ERP: HTTP GET + Bearer token
     ERP-->>APP: Stock data
     APP-->>GW: 200 OK + body + X-Stock-Source
     GW-->>C: 200 OK + headers
@@ -513,11 +486,17 @@ sequenceDiagram
 ### 6.3 Protección de Legados (Backpressure)
 
 ```mermaid
-graph LR
-    APP[App Pod] -->|@CircuitBreaker| CB{Circuit Breaker<br/>Ventana 30<br/>50% fallos<br/>Wait 60s}
-    APP -->|@Bulkhead| BH{Bulkhead<br/>Max 20 concurrent<br/>Wait 100ms}
-    CB -->|CLOSED| SAP[SAP ERP<br/>Pool 20 conn<br/>Timeout 250ms]
-    CB -->|OPEN| STALE[Stale Cache<br/>serve stale-cache]
+flowchart LR
+    APP["App Pod"]
+    CB{"Circuit Breaker<br/>Ventana 30<br/>50% fallos<br/>Wait 60s"}
+    BH{"Bulkhead<br/>Max 20 concurrent<br/>Wait 100ms"}
+    SAP["SAP ERP<br/>Pool 20 conn<br/>Timeout 250ms"]
+    STALE["Stale Cache<br/>serve stale-cache"]
+
+    APP -->|@CircuitBreaker| CB
+    APP -->|@Bulkhead| BH
+    CB -->|CLOSED| SAP
+    CB -->|OPEN| STALE
     BH -->|Rejected| STALE
     SAP -->|Fail| STALE
 
