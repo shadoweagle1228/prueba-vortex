@@ -265,7 +265,7 @@ flowchart LR
     ADAPTER -->|implements| PORT
     ADAPTER --> CLIENT
     ADAPTER --> MAPPER
-    CLIENT -->|HTTP/REST/SOAP| LEGACY
+    CLIENT -->|HTTP REST SOAP| LEGACY
     MAPPER -->|normalize| DOMAIN
 
     style PORT fill:#f3e5f5,stroke:#7b1fa2
@@ -493,8 +493,8 @@ flowchart LR
     SAP["SAP ERP<br/>Pool 20 conn<br/>Timeout 250ms"]
     STALE["Stale Cache<br/>serve stale-cache"]
 
-    APP -->|@CircuitBreaker| CB
-    APP -->|@Bulkhead| BH
+    APP -->|CircuitBreaker| CB
+    APP -->|Bulkhead| BH
     CB -->|CLOSED| SAP
     CB -->|OPEN| STALE
     BH -->|Rejected| STALE
