@@ -1,45 +1,54 @@
-from aws_cdk import (
-    Stack,
-    aws_ec2 as ec2,
-    aws_eks as eks,
-    aws_iam as iam,
-    aws_kms as kms,
+from aws_cdk import Stack
+from aws_cdk.aws_ec2 import Vpc, SubnetSelection, SubnetType, InstanceType, InstanceClass, InstanceSize
+from aws_cdk.aws_eks import (
+    Cluster,
+    KubernetesVersion,
+    Nodegroup,
+    CapacityType,
 )
+from aws_cdk.aws_iam import Role, ManagedPolicy, ServicePrincipal
 from constructs import Construct
 
+
 class ComputeStack(Stack):
-    """
-    ComputeStack: Aprovisiona el cluster EKS sobre instancias ARM64 Graviton3.
-    """
-    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.IVpc, kms_key: kms.IKey, redis_sg: ec2.ISecurityGroup, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, vpc: Vpc, **kwargs):
         super().__init__(scope, construct_id, **kwargs)
 
-        # Cluster EKS gestionado con soporte OIDC para IRSA
-        self.cluster = eks.Cluster(
+        cluster = Cluster(
             self,
-            "PieEksCluster",
-            version=eks.KubernetesVersion.V1_29,
+            "EKSCluster",
+            version=KubernetesVersion.V1_29,
             vpc=vpc,
-            vpc_subnets=[ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS)],
-            endpoint_access=eks.EndpointAccess.PUBLIC_AND_PRIVATE,
+            vpc_subnets=[SubnetSelection(subnet_type=SubnetType.PRIVATE_WITH_EGRESS)],
             default_capacity=0,
-            secrets_encryption_key=kms_key
         )
 
-        # NodeGroup administrado sobre instancias c7g (Graviton3 ARM64)
-        self.nodegroup = self.cluster.add_nodegroup_capacity(
-            "AppNodeGroup",
-            instance_types=[ec2.InstanceType("c7g.medium")],
+        nodegroup_role = Role(
+            self,
+            "NodegroupRole",
+            assumed_by=ServicePrincipal("ec2.amazonaws.com"),
+            managed_policies=[
+                ManagedPolicy.from_aws_managed_policy_name(
+                    "AmazonEKSWorkerNodePolicy"
+                ),
+                ManagedPolicy.from_aws_managed_policy_name(
+                    "AmazonEKS_CNI_Policy"
+                ),
+                ManagedPolicy.from_aws_managed_policy_name(
+                    "AmazonEC2ContainerRegistryReadOnly"
+                ),
+            ],
+        )
+
+        Nodegroup(
+            self,
+            "NodeGroup",
+            cluster=cluster,
+            capacity_type=CapacityType.SPOT,
+            instance_types=[InstanceType.of(InstanceClass.T4G, InstanceSize.MEDIUM)],
             min_size=2,
-            max_size=6,
+            max_size=4,
             desired_size=2,
-            subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS),
-            ami_type=eks.NodegroupAmiType.AL2_ARM_64
-        )
-
-        # Permitir tráfico desde los nodos de EKS hacia ElastiCache Redis
-        redis_sg.add_ingress_rule(
-            peer=self.nodegroup.role,
-            connection=ec2.Port.tcp(6379),
-            description="Permitir conexion de pods EKS hacia Redis"
+            node_role=nodegroup_role,
+            subnets=SubnetSelection(subnet_type=SubnetType.PRIVATE_WITH_EGRESS),
         )

@@ -1,0 +1,28 @@
+{
+  "intent": "261016-andes-retail-interop",
+  "unit": "skeleton-stock-query",
+  "stage": "code-generation",
+  "steps": [
+    "1.1-1.3 scaffolding Gradle multi-modulo",
+    "2.1-2.4 IaC CDK Python (network/data/compute)",
+    "3.1-3.4 dominio VOs + StockLevel + tests TDD + puertos",
+    "4.1-4.4 aplicacion DTOs + GetStockUseCase + tests TDD + servicio",
+    "5.1-5.7 infraestructura adapters + REST + seguridad + config + filtros",
+    "6.1-6.4 tests controlador/arch/integration + Dockerfile"
+  ],
+  "artifacts": [
+    "settings.gradle.kts",
+    "build.gradle.kts",
+    "Dockerfile",
+    "services/stock-price-adapter/build.gradle.kts",
+    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/StockPriceAdapterApplication.kt",
+    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/domain/model/*.kt",
+    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/domain/port/*.kt",
+    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/application/**/*.kt",
+    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/infrastructure/**/*.kt",
+    "services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/web/**/*.kt",
+    "services/stock-price-adapter/src/main/resources/*.yml",
+    "services/stock-price-adapter/src/main/resources/*.xml",
+    "services/stock-price-adapter/src/test/**/*.kt"
+  ]
+}

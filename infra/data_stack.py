@@ -1,64 +1,64 @@
-from aws_cdk import (
-    Stack,
-    aws_ec2 as ec2,
-    aws_elasticache as elasticache,
-    aws_rds as rds,
-    aws_kms as kms,
+from aws_cdk import Stack, Duration, RemovalPolicy
+from aws_cdk.aws_ec2 import Vpc, SubnetSelection, SubnetType
+from aws_cdk.aws_elasticache import (
+    CfnCacheCluster,
+    CfnSubnetGroup,
+    CfnReplicationGroup,
 )
+from aws_cdk.aws_rds import (
+    DatabaseCluster,
+    DatabaseClusterEngine,
+    AuroraMysqlEngineVersion,
+    ServerlessV2ScalingConfiguration,
+)
+from aws_cdk.aws_kms import Key
 from constructs import Construct
 
+
 class DataStack(Stack):
-    """
-    DataStack: Aprovisiona ElastiCache Redis Multi-AZ y Aurora Serverless v2.
-    """
-    def __init__(self, scope: Construct, construct_id: str, vpc: ec2.IVpc, kms_key: kms.IKey, **kwargs) -> None:
+    def __init__(self, scope: Construct, construct_id: str, vpc: Vpc, **kwargs):
         super().__init__(scope, construct_id, **kwargs)
 
-        # Security Group para ElastiCache Redis
-        self.redis_sg = ec2.SecurityGroup(
-            self,
-            "RedisSecurityGroup",
-            vpc=vpc,
-            description="Control de acceso para ElastiCache Redis de inventario",
-            allow_all_outbound=False
-        )
-
-        # Grupo de subredes aisladas CDE para Redis
-        self.redis_subnet_group = elasticache.CfnSubnetGroup(
+        redis_subnet_group = CfnSubnetGroup(
             self,
             "RedisSubnetGroup",
-            description="Subredes aisladas CDE para Redis",
-            subnet_ids=[s.subnet_id for s in vpc.isolated_subnets]
+            description="Subnet group for ElastiCache Redis",
+            subnet_ids=vpc.select_subnets(
+                subnet_type=SubnetType.PRIVATE_ISOLATED
+            ).subnet_ids,
         )
 
-        # Cluster ElastiCache Redis Multi-AZ
-        self.redis_cluster = elasticache.CfnReplicationGroup(
+        CfnReplicationGroup(
             self,
-            "StockRedisCluster",
-            replication_group_description="Redis Cache Multi-AZ para Stock y Catálogo",
-            engine="redis",
-            cache_node_type="cache.t4g.medium",
+            "RedisReplicationGroup",
+            replication_group_id="andes-retail-redis",
+            description="Redis Multi-AZ",
             num_cache_clusters=2,
+            engine="redis",
+            engine_version="7.1",
+            cache_node_type="cache.t4g.small",
+            cache_subnet_group_name=redis_subnet_group.ref,
             automatic_failover_enabled=True,
             multi_az_enabled=True,
-            transit_encryption_enabled=True,
-            at_rest_encryption_enabled=True,
-            kms_key_id=kms_key.key_id,
-            cache_subnet_group_name=self.redis_subnet_group.ref,
-            security_group_ids=[self.redis_sg.security_group_id]
         )
 
-        # Aurora PostgreSQL Serverless v2 para Keycloak y persistencia
-        self.aurora_cluster = rds.DatabaseCluster(
+        kms_key = Key(self, "DataKey", removal_policy=RemovalPolicy.DESTROY)
+
+        DatabaseCluster(
             self,
-            "PieAuroraCluster",
-            engine=rds.DatabaseClusterEngine.aurora_postgres(
-                version=rds.AuroraPostgresEngineVersion.VER_16_1
+            "Aurora",
+            engine=DatabaseClusterEngine.aurora_mysql(
+                version=AuroraMysqlEngineVersion.VER_3_07_1
             ),
             vpc=vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            vpc_subnets=SubnetSelection(subnet_type=SubnetType.PRIVATE_ISOLATED),
             serverless_v2_min_capacity=0.5,
-            serverless_v2_max_capacity=4.0,
+            serverless_v2_max_capacity=2,
+            scaling_configuration=ServerlessV2ScalingConfiguration(
+                min_capacity=0.5,
+                max_capacity=2,
+            ),
+            storage_encrypted=True,
             storage_encryption_key=kms_key,
-            default_database_name="andes_pie"
+            removal_policy=RemovalPolicy.SNAPSHOT,
         )

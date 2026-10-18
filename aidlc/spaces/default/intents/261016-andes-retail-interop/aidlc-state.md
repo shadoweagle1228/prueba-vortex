@@ -7,7 +7,7 @@
 - **Project Type Source**: workspace scan
 - **Scope**: feature
 - **Start Date**: 2026-10-16T16:39:23Z
-- **State Version**: 15
+- **State Version**: 8
 - **Active Agent**: aidlc-developer-agent
 - **Worktree Path**:
 - **Bolt Refs**:

@@ -1,13 +1,8 @@
 package com.andesretail.stock.domain.model
 
-@JvmInline
-value class SKU(val value: String) {
+data class SKU(val value: String) {
     init {
-        require(value.isNotBlank()) { "El SKU no puede estar vacio" }
-        require(value.matches(Regex("^[A-Z0-9_-]{3,50}$"))) {
-            "El SKU '$value' no cumple con el formato alfanumerico permitido"
-        }
+        require(value.isNotBlank()) { "sku cannot be blank" }
+        require(value.length <= 50) { "sku too long" }
     }
-
-    override fun toString(): String = value
 }

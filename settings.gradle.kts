@@ -1,3 +1,2 @@
-rootProject.name = "andes-retail-pie"
-
+rootProject.name = "andes-retail-interop"
 include("services:stock-price-adapter")
