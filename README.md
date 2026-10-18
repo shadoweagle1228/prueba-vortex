@@ -30,48 +30,29 @@ Este repositorio contiene el **primer incremento real (Walking Skeleton)** de la
 ### Vista general (Clean Architecture + Cloud-Native)
 
 ```mermaid
-graph TB
-    subgraph "Canal Digital"
-        CLIENT[e-commerce / App / Marketplace]
-    end
+flowchart TB
+    CLIENT["e-commerce / App / Marketplace"]
 
-    subgraph "Edge / Perímetro"
-        KONG[Kong Ingress Controller<br/>Rate Limiting 100 req/s<br/>JWT Validation]
-    end
+    KONG["Kong Ingress Controller<br/>Rate Limiting 100 req/s<br/>JWT Validation"]
 
-    subgraph "Cluster EKS (staging/prod)"
-        subgraph "Namespace: andes-retail"
-            APP[stock-price-adapter<br/>Kotlin + Spring Boot 3.2<br/>Clean Architecture]
-            REDIS[(Redis ElastiCache<br/>Fresh TTL 60s / Stale TTL 3600s)]
-        end
+    APP["stock-price-adapter<br/>Kotlin + Spring Boot 3.2<br/>Clean Architecture"]
+    REDIS[("Redis ElastiCache<br/>Fresh TTL 60s / Stale TTL 3600s")]
 
-        subgraph "Namespace: kong"
-            KONG_POD[Kong Pods]
-        end
+    KONG_POD["Kong Pods"]
+    KC["Keycloak 24<br/>Realm: andes-retail<br/>PostgreSQL Aurora"]
 
-        subgraph "Namespace: keycloak"
-            KC[Keycloak 24<br/>Realm: andes-retail<br/>PostgreSQL Aurora]
-        end
+    PROM["Prometheus + Grafana"]
+    XRAY["AWS X-Ray"]
 
-        subgraph "Namespace: monitoring"
-            PROM[Prometheus + Grafana]
-            XRAY[AWS X-Ray]
-        end
-    end
+    REDIS_AWS[("ElastiCache Redis 7.1<br/>Multi-AZ, TLS, KMS")]
+    AURORA[("Aurora PostgreSQL 16<br/>Serverless v2, Multi-AZ, KMS")]
 
-    subgraph "Data Layer (AWS Managed)"
-        REDIS_AWS[(ElastiCache Redis 7.1<br/>Multi-AZ, TLS, KMS)]
-        AURORA[(Aurora PostgreSQL 16<br/>Serverless v2, Multi-AZ, KMS)]
-    end
-
-    subgraph "On-Premise / Legacy"
-        SAP[SAP ERP / OData API_STOCK<br/>Timeout 250ms / Pool 20 conn]
-    end
+    SAP["SAP ERP / OData API_STOCK<br/>Timeout 250ms / Pool 20 conn"]
 
     CLIENT -->|HTTPS + JWT| KONG
     KONG -->|Rate Limit + Auth| APP
     APP -->|Read Fresh| REDIS
-    APP -.->|Miss Fresh → Read Stale| REDIS
+    APP -.->|Miss Fresh - Read Stale| REDIS
     APP -->|HTTP + Bearer| SAP
     APP -->|Metrics + Traces| PROM
     APP -->|Traces| XRAY
@@ -79,16 +60,26 @@ graph TB
     KC -.->|Tokens| CLIENT
     REDIS_AWS -.->|Replication| REDIS
     AURORA -.->|Data| KC
+
+    style KONG fill:#fff3e0,stroke:#ef6c00
+    style APP fill:#e3f2fd,stroke:#1565c0
+    style REDIS fill:#fce4ec,stroke:#c2185b
 ```
 
 ### Clean Architecture — Reglas de dependencia
 
 ```mermaid
-graph LR
-    WEB[web<br/>Controllers, Filters, Security] --> APP[application<br/>Use Cases, DTOs, Ports]
-    APP --> DOM[domain<br/>Models, VOs, Entities, Exceptions]
-    INFRA[infra<br/>Adapters, Mappers, Clients] --> DOM
-    APP -.->|implements| PORTS[Ports<br/>Interfaces]
+flowchart LR
+    WEB["web<br/>Controllers, Filters, Security"]
+    APP["application<br/>Use Cases, DTOs, Ports"]
+    DOM["domain<br/>Models, VOs, Entities, Exceptions"]
+    INFRA["infra<br/>Adapters, Mappers, Clients"]
+    PORTS["Ports<br/>Interfaces"]
+
+    WEB --> APP
+    APP --> DOM
+    INFRA --> DOM
+    APP -.->|implements| PORTS
     INFRA -.->|implements| PORTS
 
     style DOM fill:#e8f5e9,stroke:#2e7d32
