@@ -399,7 +399,7 @@ sequenceDiagram
     GW->>GW: Verificar scope inventory:read
     GW->>GW: Rate limit check (100 req/s)
     GW->>APP: Forward request + X-Correlation-ID
-    APP->>APP: @PreAuthorize("hasAuthority('SCOPE_inventory:read')")
+    APP->>APP: PreAuthorize SCOPE_inventory:read
     APP->>APP: Validar payload, business rules
     APP->>ERP: HTTP GET + Bearer token
     ERP-->>APP: Stock data
