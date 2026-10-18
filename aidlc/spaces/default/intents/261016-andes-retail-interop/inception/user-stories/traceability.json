@@ -1,0 +1,83 @@
+{
+  "version": "1.0",
+  "intent": "261016-andes-retail-interop",
+  "stage": "user-stories",
+  "elements": [
+    {
+      "id": "US-01",
+      "type": "story",
+      "title": "Consultar stock disponible por SKU",
+      "upstream": ["FR-01", "NFR-01", "NFR-10", "CA-02"],
+      "downstream": []
+    },
+    {
+      "id": "US-02",
+      "type": "story",
+      "title": "Consultar precio por SKU y canal",
+      "upstream": ["FR-02", "NFR-01", "NFR-07", "CA-01"],
+      "downstream": []
+    },
+    {
+      "id": "US-03",
+      "type": "story",
+      "title": "Crear orden end-to-end",
+      "upstream": ["FR-03", "FR-06", "NFR-02", "NFR-05", "CA-01", "CA-02", "CA-03"],
+      "downstream": []
+    },
+    {
+      "id": "US-04",
+      "type": "story",
+      "title": "Idempotencia en crear orden",
+      "upstream": ["FR-04", "CA-03"],
+      "downstream": []
+    },
+    {
+      "id": "US-05",
+      "type": "story",
+      "title": "Consultar estado de orden",
+      "upstream": ["FR-05", "NFR-07", "CA-01"],
+      "downstream": []
+    },
+    {
+      "id": "US-06",
+      "type": "story",
+      "title": "Recibir webhook de orden confirmada",
+      "upstream": ["FR-07", "FR-10", "CA-01"],
+      "downstream": []
+    },
+    {
+      "id": "US-07",
+      "type": "story",
+      "title": "Recibir webhook de resultado de pago",
+      "upstream": ["FR-08"],
+      "downstream": []
+    },
+    {
+      "id": "US-08",
+      "type": "story",
+      "title": "Autenticación y autorización multi-tenant",
+      "upstream": ["FR-11", "NFR-07", "CA-01"],
+      "downstream": []
+    },
+    {
+      "id": "US-09",
+      "type": "story",
+      "title": "Onboarding de canal externo",
+      "upstream": ["FR-12", "NFR-13"],
+      "downstream": []
+    },
+    {
+      "id": "US-10",
+      "type": "story",
+      "title": "Enmascaramiento de PII en logs",
+      "upstream": ["NFR-05", "CA-01", "FR-01"],
+      "downstream": []
+    }
+  ],
+  "coverage": {
+    "functional_requirements_covered": ["FR-01","FR-02","FR-03","FR-04","FR-05","FR-06","FR-07","FR-08","FR-11","FR-12"],
+    "functional_requirements_deferred": ["FR-09","FR-10"],
+    "nfr_covered": ["NFR-01","NFR-02","NFR-05","NFR-07","NFR-10","NFR-13"],
+    "constraints_covered": ["CA-01","CA-02","CA-03"]
+  }
+}

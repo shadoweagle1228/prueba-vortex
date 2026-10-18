@@ -1,0 +1,87 @@
+{
+  "version": "1.0",
+  "intent": "261016-andes-retail-interop",
+  "stage": "domain-design",
+  "elements": [
+    {
+      "id": "BC-ORDER",
+      "type": "bounded-context",
+      "name": "Order Context",
+      "service": "order-service",
+      "upstream": ["FR-03", "FR-04", "FR-05", "FR-06", "CA-01", "CA-03"],
+      "downstream": ["US-03", "US-04", "US-05"]
+    },
+    {
+      "id": "BC-INVENTORY",
+      "type": "bounded-context",
+      "name": "Inventory Context",
+      "service": "stock-price-adapter",
+      "upstream": ["FR-01", "FR-02", "CA-02", "CA-03"],
+      "downstream": ["US-01", "US-02"]
+    },
+    {
+      "id": "BC-PAYMENT",
+      "type": "bounded-context",
+      "name": "Payment Context",
+      "service": "payment-service",
+      "upstream": ["CA-01", "CA-03"],
+      "downstream": ["US-03", "US-07"]
+    },
+    {
+      "id": "BC-NOTIFICATION",
+      "type": "bounded-context",
+      "name": "Notification Context",
+      "service": "notification-service",
+      "upstream": ["FR-07", "FR-08", "FR-10", "CA-01"],
+      "downstream": ["US-06", "US-07"]
+    },
+    {
+      "id": "ADR-01",
+      "type": "adr",
+      "title": "Modelo de Dinero en Centavos",
+      "upstream": ["FR-03"],
+      "downstream": []
+    },
+    {
+      "id": "ADR-02",
+      "type": "adr",
+      "title": "Outbox Pattern para Publicación de Eventos",
+      "upstream": ["FR-03", "FR-07", "CA-03"],
+      "downstream": []
+    },
+    {
+      "id": "ADR-03",
+      "type": "adr",
+      "title": "Anti-Corruption Layer para ERP",
+      "upstream": ["CA-02", "CA-03", "FR-01", "FR-02"],
+      "downstream": []
+    },
+    {
+      "id": "ADR-04",
+      "type": "adr",
+      "title": "Circuit Breaker Fail-Closed con Stale Cache",
+      "upstream": ["CA-02", "NFR-10", "FR-01"],
+      "downstream": []
+    },
+    {
+      "id": "ADR-05",
+      "type": "adr",
+      "title": "Idempotencia Dual Redis + Aurora",
+      "upstream": ["FR-04", "CA-03"],
+      "downstream": []
+    },
+    {
+      "id": "ADR-06",
+      "type": "adr",
+      "title": "PaymentToken como Value Object Opaco",
+      "upstream": ["CA-01", "FR-03", "NFR-05"],
+      "downstream": []
+    }
+  ],
+  "coverage": {
+    "requirements_covered": ["FR-01","FR-02","FR-03","FR-04","FR-05","FR-06","FR-07","FR-08","FR-10"],
+    "requirements_deferred": ["FR-09","FR-11","FR-12"],
+    "constraints_covered": ["CA-01","CA-02","CA-03"],
+    "nfr_covered": ["NFR-05","NFR-10"]
+  }
+}

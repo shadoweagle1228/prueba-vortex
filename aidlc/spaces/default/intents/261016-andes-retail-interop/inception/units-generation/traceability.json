@@ -1,0 +1,106 @@
+{
+  "version": "1.0",
+  "intent": "261016-andes-retail-interop",
+  "stage": "units-generation",
+  "elements": [
+    {
+      "id": "U1",
+      "type": "unit",
+      "name": "skeleton-stock-query",
+      "kind": "service",
+      "depends_on": [],
+      "upstream_requirements": ["FR-01", "FR-11", "NFR-01", "NFR-04", "NFR-06", "NFR-10", "NFR-11", "NFR-12", "CA-01", "CA-02", "CA-03"],
+      "upstream_stories": ["US-01", "US-08"],
+      "upstream_contexts": ["BC-INVENTORY"],
+      "upstream_adrs": ["ADR-03", "ADR-04"]
+    },
+    {
+      "id": "U2",
+      "type": "unit",
+      "name": "price-query",
+      "kind": "service",
+      "depends_on": ["U1"],
+      "upstream_requirements": ["FR-02", "NFR-01"],
+      "upstream_stories": ["US-02"],
+      "upstream_contexts": ["BC-INVENTORY"],
+      "upstream_adrs": []
+    },
+    {
+      "id": "U3",
+      "type": "unit",
+      "name": "order-lifecycle",
+      "kind": "service",
+      "depends_on": ["U1"],
+      "upstream_requirements": ["FR-03", "FR-04", "FR-05", "FR-06", "NFR-02", "NFR-05", "NFR-08", "NFR-14", "CA-01", "CA-03"],
+      "upstream_stories": ["US-03", "US-04", "US-05"],
+      "upstream_contexts": ["BC-ORDER"],
+      "upstream_adrs": ["ADR-01", "ADR-02", "ADR-05", "ADR-06"]
+    },
+    {
+      "id": "U4",
+      "type": "unit",
+      "name": "payment-authorization",
+      "kind": "service",
+      "depends_on": ["U3"],
+      "upstream_requirements": ["CA-01", "CA-03", "NFR-05", "NFR-14"],
+      "upstream_stories": ["US-03", "US-07"],
+      "upstream_contexts": ["BC-PAYMENT"],
+      "upstream_adrs": ["ADR-06"]
+    },
+    {
+      "id": "U5",
+      "type": "unit",
+      "name": "notification-webhooks",
+      "kind": "service",
+      "depends_on": ["U3"],
+      "upstream_requirements": ["FR-07", "FR-08", "FR-10", "CA-01", "NFR-14"],
+      "upstream_stories": ["US-06", "US-07"],
+      "upstream_contexts": ["BC-NOTIFICATION"],
+      "upstream_adrs": []
+    },
+    {
+      "id": "U6",
+      "type": "unit",
+      "name": "security-compliance",
+      "kind": "spec",
+      "depends_on": ["U1"],
+      "upstream_requirements": ["FR-11", "FR-12", "NFR-05", "NFR-06", "NFR-07", "NFR-09", "NFR-13", "CA-01"],
+      "upstream_stories": ["US-08", "US-09", "US-10"],
+      "upstream_contexts": [],
+      "upstream_adrs": []
+    },
+    {
+      "id": "U7",
+      "type": "unit",
+      "name": "observability-baseline",
+      "kind": "packaging",
+      "depends_on": ["U1"],
+      "upstream_requirements": ["NFR-04", "NFR-08"],
+      "upstream_stories": [],
+      "upstream_contexts": [],
+      "upstream_adrs": []
+    },
+    {
+      "id": "U8",
+      "type": "unit",
+      "name": "load-validation",
+      "kind": "spec",
+      "depends_on": ["U3", "U4", "U5", "U6"],
+      "upstream_requirements": ["NFR-01", "NFR-02", "NFR-03", "NFR-04", "NFR-11"],
+      "upstream_stories": [],
+      "upstream_contexts": [],
+      "upstream_adrs": []
+    }
+  ],
+  "coverage": {
+    "requirements_covered": [
+      "FR-01", "FR-02", "FR-03", "FR-04", "FR-05", "FR-06", "FR-07", "FR-08", "FR-10", "FR-11", "FR-12",
+      "NFR-01", "NFR-02", "NFR-03", "NFR-04", "NFR-05", "NFR-06", "NFR-07", "NFR-08", "NFR-09", "NFR-10", "NFR-11", "NFR-12", "NFR-13", "NFR-14",
+      "CA-01", "CA-02", "CA-03"
+    ],
+    "requirements_deferred": ["FR-09"],
+    "stories_covered": ["US-01", "US-02", "US-03", "US-04", "US-05", "US-06", "US-07", "US-08", "US-09", "US-10"],
+    "contexts_covered": ["BC-ORDER", "BC-INVENTORY", "BC-PAYMENT", "BC-NOTIFICATION"],
+    "adrs_covered": ["ADR-01", "ADR-02", "ADR-03", "ADR-04", "ADR-05", "ADR-06"]
+  }
+}

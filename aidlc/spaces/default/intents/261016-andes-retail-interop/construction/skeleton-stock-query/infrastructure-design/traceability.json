@@ -1,0 +1,43 @@
+{
+  "version": "1.0",
+  "intent": "261016-andes-retail-interop",
+  "phase": "construction",
+  "stage": "infrastructure-design",
+  "unit": "skeleton-stock-query",
+  "elements": [
+    {
+      "id": "INFRA-NET-01",
+      "type": "cloud-resource",
+      "name": "AWS VPC 3-Tier Multi-AZ con CDE Aislado",
+      "upstream": ["DES-SEC-01", "CA-01"]
+    },
+    {
+      "id": "INFRA-COMP-01",
+      "type": "cloud-resource",
+      "name": "AWS EKS Cluster con NodeGroups Graviton3 ARM64",
+      "upstream": ["DES-SCAL-01", "TECH-STACK-01"]
+    },
+    {
+      "id": "INFRA-DATA-01",
+      "type": "cloud-resource",
+      "name": "ElastiCache Redis Multi-AZ con Cifrado KMS",
+      "upstream": ["DES-PERF-01", "NFR-06"]
+    },
+    {
+      "id": "INFRA-MON-01",
+      "type": "monitoring-rule",
+      "name": "Catálogo de Métricas Prometheus y 4 Alarmas CloudWatch",
+      "upstream": ["DES-OBS-01", "NFR-04", "NFR-10"]
+    },
+    {
+      "id": "INFRA-CICD-01",
+      "type": "cicd-pipeline",
+      "name": "Pipeline CI/CD Multi-Arch con JaCoCo 80% y ArchUnit Gate",
+      "upstream": ["DES-ARCH-01", "NFR-14", "CA-03"]
+    }
+  ],
+  "coverage": {
+    "nfr_covered": ["NFR-01", "NFR-03", "NFR-04", "NFR-06", "NFR-07", "NFR-08", "NFR-10", "NFR-11", "NFR-12", "NFR-14"],
+    "constraints_covered": ["CA-01", "CA-02", "CA-03"]
+  }
+}

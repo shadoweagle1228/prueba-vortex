@@ -1,0 +1,102 @@
+{
+  "version": "1.0",
+  "intent": "261016-andes-retail-interop",
+  "stage": "contract-design",
+  "elements": [
+    {
+      "id": "C-01",
+      "type": "contract",
+      "name": "Inventory Stock API",
+      "mechanism": "openapi-3.0",
+      "provider_unit": "skeleton-stock-query",
+      "consumer": "External Channels",
+      "upstream_requirements": ["FR-01", "NFR-01", "CA-02"],
+      "upstream_units": ["U1"]
+    },
+    {
+      "id": "C-02",
+      "type": "contract",
+      "name": "Catalog Price API",
+      "mechanism": "openapi-3.0",
+      "provider_unit": "price-query",
+      "consumer": "External Channels",
+      "upstream_requirements": ["FR-02", "NFR-01"],
+      "upstream_units": ["U2"]
+    },
+    {
+      "id": "C-03",
+      "type": "contract",
+      "name": "Orders API",
+      "mechanism": "openapi-3.0",
+      "provider_unit": "order-lifecycle",
+      "consumer": "External Channels",
+      "upstream_requirements": ["FR-03", "FR-04", "FR-05", "NFR-02", "NFR-05", "CA-01"],
+      "upstream_units": ["U3"]
+    },
+    {
+      "id": "C-04",
+      "type": "contract",
+      "name": "Auth Token API",
+      "mechanism": "openapi-3.0",
+      "provider_unit": "security-compliance",
+      "consumer": "External Channels",
+      "upstream_requirements": ["FR-11", "NFR-07", "CA-01"],
+      "upstream_units": ["U6"]
+    },
+    {
+      "id": "C-05",
+      "type": "contract",
+      "name": "Stock Reservation Port",
+      "mechanism": "openapi-3.0",
+      "provider_unit": "skeleton-stock-query",
+      "consumer": "order-lifecycle",
+      "upstream_requirements": ["FR-03", "FR-06", "CA-02"],
+      "upstream_units": ["U1", "U3"]
+    },
+    {
+      "id": "C-06",
+      "type": "contract",
+      "name": "Payment Authorization Port",
+      "mechanism": "openapi-3.0",
+      "provider_unit": "payment-authorization",
+      "consumer": "order-lifecycle",
+      "upstream_requirements": ["FR-03", "CA-01"],
+      "upstream_units": ["U3", "U4"]
+    },
+    {
+      "id": "C-07",
+      "type": "contract",
+      "name": "Domain Events Bus",
+      "mechanism": "asyncapi-2.6",
+      "provider_unit": "order-lifecycle",
+      "consumer": "notification-webhooks",
+      "upstream_requirements": ["FR-07", "FR-08", "CA-03"],
+      "upstream_units": ["U3", "U4", "U5"]
+    },
+    {
+      "id": "C-08",
+      "type": "contract",
+      "name": "Outgoing Webhooks Delivery",
+      "mechanism": "asyncapi-2.6",
+      "provider_unit": "notification-webhooks",
+      "consumer": "External Channels",
+      "upstream_requirements": ["FR-07", "FR-08", "FR-10", "CA-01"],
+      "upstream_units": ["U5"]
+    },
+    {
+      "id": "C-09",
+      "type": "contract",
+      "name": "ERP Adapter ACL Boundary",
+      "mechanism": "shared-schema",
+      "provider_unit": "Legacy ERP",
+      "consumer": "skeleton-stock-query",
+      "upstream_requirements": ["FR-01", "CA-02"],
+      "upstream_units": ["U1"]
+    }
+  ],
+  "coverage": {
+    "contracts_count": 9,
+    "requirements_covered": ["FR-01", "FR-02", "FR-03", "FR-04", "FR-05", "FR-06", "FR-07", "FR-08", "FR-10", "FR-11", "CA-01", "CA-02", "CA-03", "NFR-01", "NFR-02", "NFR-05", "NFR-07"],
+    "units_covered": ["U1", "U2", "U3", "U4", "U5", "U6"]
+  }
+}

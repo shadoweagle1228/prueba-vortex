@@ -1,0 +1,72 @@
+{
+  "version": "1.0",
+  "intent": "261016-andes-retail-interop",
+  "phase": "construction",
+  "stage": "functional-design",
+  "unit": "skeleton-stock-query",
+  "elements": [
+    {
+      "id": "FD-E01",
+      "type": "entity",
+      "name": "StockLevel",
+      "upstream_requirements": ["FR-01"],
+      "upstream_stories": ["US-01"],
+      "upstream_contexts": ["BC-INVENTORY"]
+    },
+    {
+      "id": "FD-E02",
+      "type": "entity",
+      "name": "StockReservation",
+      "upstream_requirements": ["FR-01", "FR-06"],
+      "upstream_stories": ["US-01", "US-03"],
+      "upstream_contexts": ["BC-INVENTORY"]
+    },
+    {
+      "id": "BR-STK-01",
+      "type": "rule",
+      "name": "Prioridad de Caché en Consulta",
+      "upstream_requirements": ["NFR-01", "FR-01"],
+      "upstream_stories": ["US-01"]
+    },
+    {
+      "id": "BR-STK-02",
+      "type": "rule",
+      "name": "Protección por Circuit Breaker",
+      "upstream_requirements": ["NFR-10", "CA-02"],
+      "upstream_adrs": ["ADR-04"]
+    },
+    {
+      "id": "BR-STK-03",
+      "type": "rule",
+      "name": "Degradación Controlada con Stale Cache",
+      "upstream_requirements": ["CA-02", "NFR-10"],
+      "upstream_adrs": ["ADR-04"]
+    },
+    {
+      "id": "BR-STK-04",
+      "type": "rule",
+      "name": "Fail-Closed ante Agotamiento",
+      "upstream_requirements": ["CA-02", "NFR-04"],
+      "upstream_adrs": ["ADR-04"]
+    },
+    {
+      "id": "BR-STK-05",
+      "type": "rule",
+      "name": "Aislamiento por Bulkhead",
+      "upstream_requirements": ["CA-02", "NFR-12"],
+      "upstream_adrs": ["ADR-03"]
+    },
+    {
+      "id": "BR-STK-06",
+      "type": "rule",
+      "name": "Normalización de Valores Negativos SAP",
+      "upstream_requirements": ["CA-02", "FR-01"],
+      "upstream_adrs": ["ADR-03"]
+    }
+  ],
+  "coverage": {
+    "requirements_covered": ["FR-01", "NFR-01", "NFR-04", "NFR-10", "NFR-12", "CA-01", "CA-02", "CA-03"],
+    "stories_covered": ["US-01", "US-08"],
+    "contracts_covered": ["C-01", "C-05", "C-09"]
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "intent": "261016-andes-retail-interop",
+  "phase": "construction",
+  "stage": "nfr-design",
+  "unit": "skeleton-stock-query",
+  "elements": [
+    {
+      "id": "DES-PERF-01",
+      "type": "design-pattern",
+      "name": "Redis Dual Pipeline Cache",
+      "upstream": ["NFR-PERF-01", "NFR-01"]
+    },
+    {
+      "id": "DES-SEC-01",
+      "type": "design-pattern",
+      "name": "Spring Security JWT Filter & Scope Validator",
+      "upstream": ["NFR-SEC-01", "CA-01", "FR-11", "NFR-07"]
+    },
+    {
+      "id": "DES-SCAL-01",
+      "type": "design-pattern",
+      "name": "Kubernetes HPA & Topology Spread",
+      "upstream": ["NFR-SCAL-01", "NFR-03"]
+    },
+    {
+      "id": "DES-REL-01",
+      "type": "design-pattern",
+      "name": "Resilience4j Circuit Breaker & Bulkhead with Stale Fallback",
+      "upstream": ["NFR-REL-01", "CA-02", "NFR-10", "NFR-12"]
+    },
+    {
+      "id": "DES-OBS-01",
+      "type": "design-pattern",
+      "name": "CorrelationIdFilter MDC & JSON Logstash Layout",
+      "upstream": ["NFR-OBS-01", "NFR-08"]
+    },
+    {
+      "id": "DES-ARCH-01",
+      "type": "design-pattern",
+      "name": "Clean Architecture Packages & ArchUnit Gate",
+      "upstream": ["TECH-STACK-01", "CA-03"]
+    }
+  ],
+  "coverage": {
+    "nfr_covered": ["NFR-01", "NFR-03", "NFR-04", "NFR-06", "NFR-07", "NFR-08", "NFR-10", "NFR-11", "NFR-12"],
+    "constraints_covered": ["CA-01", "CA-02", "CA-03"]
+  }
+}

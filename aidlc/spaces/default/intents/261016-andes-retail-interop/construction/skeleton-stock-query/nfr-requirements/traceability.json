@@ -1,0 +1,56 @@
+{
+  "version": "1.0",
+  "intent": "261016-andes-retail-interop",
+  "phase": "construction",
+  "stage": "nfr-requirements",
+  "unit": "skeleton-stock-query",
+  "elements": [
+    {
+      "id": "NFR-PERF-01",
+      "type": "nfr-requirement",
+      "category": "performance",
+      "target": "p95 <= 300ms total, <= 50ms cache hit",
+      "upstream": ["NFR-01", "FR-01"]
+    },
+    {
+      "id": "NFR-SEC-01",
+      "type": "nfr-requirement",
+      "category": "security",
+      "target": "OAuth2 Bearer JWT con scope inventory:read, TLS 1.3, KMS",
+      "upstream": ["FR-11", "NFR-06", "NFR-07", "CA-01"]
+    },
+    {
+      "id": "NFR-SCAL-01",
+      "type": "nfr-requirement",
+      "category": "scalability",
+      "target": "HPA 2-10 pods Graviton, absorción picos 10x, rate limit Kong",
+      "upstream": ["NFR-03", "NFR-11"]
+    },
+    {
+      "id": "NFR-REL-01",
+      "type": "nfr-requirement",
+      "category": "reliability",
+      "target": "Disponibilidad 99.9%, Circuit Breaker Resilience4j 30 llamadas 50% fallo, Bulkhead 20 hilos",
+      "upstream": ["NFR-04", "NFR-10", "NFR-12", "CA-02"]
+    },
+    {
+      "id": "NFR-OBS-01",
+      "type": "nfr-requirement",
+      "category": "observability",
+      "target": "Métricas Prometheus Micrometer, logs JSON con X-Correlation-ID, 4 CloudWatch alarms",
+      "upstream": ["NFR-08", "CA-01"]
+    },
+    {
+      "id": "TECH-STACK-01",
+      "type": "tech-decision",
+      "category": "stack",
+      "target": "Kotlin 1.9, Spring Boot 3.2, JDK 21 LTS, Resilience4j 2.2, Redis Lettuce, Gradle Kotlin DSL",
+      "upstream": ["CA-03"]
+    }
+  ],
+  "coverage": {
+    "nfr_covered": ["NFR-01", "NFR-03", "NFR-04", "NFR-06", "NFR-07", "NFR-08", "NFR-10", "NFR-11", "NFR-12"],
+    "constraints_covered": ["CA-01", "CA-02", "CA-03"],
+    "requirements_covered": ["FR-01", "FR-11"]
+  }
+}
