@@ -197,43 +197,42 @@ flowchart TB
 Topología sobre la región `us-east-1`. Cada bloque tiene su contraparte en
 código del repo: `infra/network_stack.py`, `infra/security_stack.py`,
 `infra/data_stack.py` y `infra/compute_stack.py`, además de los manifiestos de
-`deploy/k8s/` y `deploy/kong/`.
+`deploy/k8s/` y `deploy/kong/`. Los iconos son los oficiales de AWS; la versión
+editable con la que se exportó está en `docs/diagrams/infraestructura-aws.drawio`.
 
 ```mermaid
 flowchart TB
     subgraph EXT["Fuera de AWS"]
-        CLIENT["Canales<br/>e-commerce · App · Marketplace"]
-        SAP["SAP ERP on-prem<br/>OData API_STOCK"]
-        CI["GitHub Actions<br/>lint · tests · coverage · build ARM64"]
+        CLIENT["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/General/Users.png' width='32'/><br/>Canales<br/>e-commerce · App · Marketplace"]
+        SAP["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/BusinessApplications/BusinessApplications.png' width='32'/><br/>SAP ERP on-prem<br/>OData API_STOCK"]
+        CI["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/DeveloperTools/CodeBuild.png' width='32'/><br/>GitHub Actions<br/>lint · tests · build ARM64"]
     end
 
     subgraph AWS["AWS · us-east-1"]
-        subgraph VPC["VPC · 3 zonas de disponibilidad · 3 NAT Gateway · Flow Logs"]
+        subgraph VPC["VPC · 3 zonas de disponibilidad · Flow Logs"]
             subgraph PUB["Subredes públicas"]
-                LB["Elastic Load Balancing<br/>Kong proxy Service"]
-                NAT["NAT Gateway x3"]
+                LB["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/NetworkingContentDelivery/ElasticLoadBalancing.png' width='32'/><br/>Load Balancer<br/>Kong proxy Service"]
+                NAT["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/NetworkingContentDelivery/VPCNATGateway.png' width='32'/><br/>NAT Gateway x3"]
             end
 
             subgraph EKS["Subredes privadas con salida · EKS 1.29 · nodegroup c7g Graviton3 · 2 a 6 nodos"]
-                KONG["Kong Ingress · 2 réplicas<br/>JWT · rate limit 100 req/s por canal"]
-                APP["stock-price-adapter · 2 réplicas<br/>HPA · PDB · NetworkPolicy"]
-                KC["Keycloak 24 · 2 réplicas<br/>realm andes-retail"]
-                ESO["External Secrets Operator"]
-                PROM["Prometheus + Grafana<br/>ServiceMonitor listo · pendiente de desplegar"]
+                KONG["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/NetworkingContentDelivery/APIGateway.png' width='32'/><br/>Kong Ingress · 2 réplicas<br/>JWT · rate limit 100 req/s"]
+                APP["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/Containers/ElasticContainerRegistry.png' width='32'/><br/>stock-price-adapter · 2 réplicas<br/>HPA · PDB · NetworkPolicy"]
+                KC["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/SecurityIdentityCompliance/IdentityandAccessManagement.png' width='32'/><br/>Keycloak 24 · 2 réplicas<br/>realm andes-retail"]
+                ESO["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/SecurityIdentityCompliance/SecretsManager.png' width='32'/><br/>External Secrets Operator"]
+                PROM["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/ManagementGovernance/ManagedServiceforPrometheus.png' width='32'/><br/>Prometheus + Grafana<br/>pendiente de desplegar"]
             end
 
             subgraph ISO["Subredes aisladas · sin ruta a Internet"]
-                REDIS[("ElastiCache Redis 7.1<br/>Multi-AZ · TLS · KMS")]
-                AURORA[("Aurora PostgreSQL 16<br/>Serverless v2 · KMS<br/>almacén de Keycloak")]
+                REDIS[("<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/Database/ElastiCacheElastiCacheforRedis.png' width='32'/><br/>ElastiCache Redis 7.1<br/>Multi-AZ · TLS · KMS")]
+                AURORA[("<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/Database/AuroraPostgreSQLInstance.png' width='32'/><br/>Aurora PostgreSQL 16<br/>Serverless v2 · KMS")]
             end
-
-            NAT["NAT Gateway x3"]
         end
 
-        KMS["KMS · rotación de claves"]
-        SM["Secrets Manager<br/>credenciales SAP · admin Keycloak"]
-        ECR["ECR · imagen arm64"]
-        OBS["X-Ray + CloudWatch Logs<br/>mes 5 · pendiente de instrumentar"]
+        KMS["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/SecurityIdentityCompliance/KeyManagementService.png' width='32'/><br/>KMS · rotación de claves"]
+        SM["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/SecurityIdentityCompliance/SecretsManager.png' width='32'/><br/>Secrets Manager<br/>credenciales SAP"]
+        ECR["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/Containers/ElasticContainerRegistry.png' width='32'/><br/>ECR · imagen arm64"]
+        OBS["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/DeveloperTools/XRay.png' width='32'/><br/>X-Ray + CloudWatch Logs<br/>mes 5 · pendiente de instrumentar"]
     end
 
     CLIENT -->|HTTPS + JWT| LB
