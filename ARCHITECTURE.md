@@ -194,78 +194,22 @@ flowchart TB
 
 ### 3.4 Infraestructura Propuesta en AWS
 
-Topología sobre la región `us-east-1`. Cada bloque tiene su contraparte en
-código del repo: `infra/network_stack.py`, `infra/security_stack.py`,
+Topología propuesta sobre `us-east-1`, con las dos zonas de disponibilidad que
+sostienen el despliegue y el aislamiento por tipo de subred. Cada bloque tiene su
+contraparte en código del repo: `infra/network_stack.py`, `infra/security_stack.py`,
 `infra/data_stack.py` y `infra/compute_stack.py`, además de los manifiestos de
-`deploy/k8s/` y `deploy/kong/`. Los iconos son los oficiales de AWS; la versión
-editable con la que se exportó está en `docs/diagrams/infraestructura-aws.drawio`.
+`deploy/k8s/` y `deploy/kong/`. La fuente editable está en
+`docs/diagrams/infraestructura-aws.drawio`.
 
-```mermaid
-flowchart TB
-    subgraph EXT["Fuera de AWS"]
-        CLIENT["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/General/Users.png' width='32'/><br/>Canales<br/>e-commerce · App · Marketplace"]
-        SAP["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/BusinessApplications/BusinessApplications.png' width='32'/><br/>SAP ERP on-prem<br/>OData API_STOCK"]
-        CI["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/DeveloperTools/CodeBuild.png' width='32'/><br/>GitHub Actions<br/>lint · tests · build ARM64"]
-    end
-
-    subgraph AWS["AWS · us-east-1"]
-        subgraph VPC["VPC · 3 zonas de disponibilidad · Flow Logs"]
-            subgraph PUB["Subredes públicas"]
-                LB["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/NetworkingContentDelivery/ElasticLoadBalancing.png' width='32'/><br/>Load Balancer<br/>Kong proxy Service"]
-                NAT["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/NetworkingContentDelivery/VPCNATGateway.png' width='32'/><br/>NAT Gateway x3"]
-            end
-
-            subgraph EKS["Subredes privadas con salida · EKS 1.29 · nodegroup c7g Graviton3 · 2 a 6 nodos"]
-                KONG["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/NetworkingContentDelivery/APIGateway.png' width='32'/><br/>Kong Ingress · 2 réplicas<br/>JWT · rate limit 100 req/s"]
-                APP["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/Containers/ElasticContainerRegistry.png' width='32'/><br/>stock-price-adapter · 2 réplicas<br/>HPA · PDB · NetworkPolicy"]
-                KC["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/SecurityIdentityCompliance/IdentityandAccessManagement.png' width='32'/><br/>Keycloak 24 · 2 réplicas<br/>realm andes-retail"]
-                ESO["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/SecurityIdentityCompliance/SecretsManager.png' width='32'/><br/>External Secrets Operator"]
-                PROM["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/ManagementGovernance/ManagedServiceforPrometheus.png' width='32'/><br/>Prometheus + Grafana<br/>pendiente de desplegar"]
-            end
-
-            subgraph ISO["Subredes aisladas · sin ruta a Internet"]
-                REDIS[("<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/Database/ElastiCacheElastiCacheforRedis.png' width='32'/><br/>ElastiCache Redis 7.1<br/>Multi-AZ · TLS · KMS")]
-                AURORA[("<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/Database/AuroraPostgreSQLInstance.png' width='32'/><br/>Aurora PostgreSQL 16<br/>Serverless v2 · KMS")]
-            end
-        end
-
-        KMS["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/SecurityIdentityCompliance/KeyManagementService.png' width='32'/><br/>KMS · rotación de claves"]
-        SM["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/SecurityIdentityCompliance/SecretsManager.png' width='32'/><br/>Secrets Manager<br/>credenciales SAP"]
-        ECR["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/Containers/ElasticContainerRegistry.png' width='32'/><br/>ECR · imagen arm64"]
-        OBS["<img src='https://raw.githubusercontent.com/awslabs/aws-icons-for-plantuml/main/dist/DeveloperTools/XRay.png' width='32'/><br/>X-Ray + CloudWatch Logs<br/>mes 5 · pendiente de instrumentar"]
-    end
-
-    CLIENT -->|HTTPS + JWT| LB
-    LB --> KONG
-    KONG --> APP
-    APP -->|caché fresh 60s| REDIS
-    APP -->|ACL · circuit breaker| NAT
-    NAT -->|OData| SAP
-    APP -->|validación JWKS| KC
-    KC -->|PostgreSQL 5432| AURORA
-    ESO -->|sincroniza secretos| SM
-    CI -->|build y push| ECR
-    ECR -->|pull imagen| APP
-    PROM -->|scrape métricas| APP
-    KMS --> REDIS
-    KMS --> AURORA
-    KMS --> SM
-    APP -.->|logs y trazas| OBS
-
-    style AWS fill:#fafafa,stroke:#424242
-    style VPC fill:#f5f5f5,stroke:#37474f
-    style PUB fill:#fff3e0,stroke:#ef6c00
-    style EKS fill:#e3f2fd,stroke:#1565c0
-    style ISO fill:#fce4ec,stroke:#c2185b
-    style OBS fill:#eceff1,stroke:#607d8b,stroke-dasharray: 5 5
-```
+![Infraestructura propuesta en AWS](docs/diagrams/infraestructura-aws.jpg)
 
 | Capa | Dónde está en el repo | Estado |
 |---|---|---|
-| VPC 3 AZ, subredes públicas/privadas/aisladas, 3 NAT, Flow Logs | `infra/network_stack.py` | ✅ CDK |
+| VPC con subredes públicas, privadas y aisladas por AZ, NAT y Flow Logs | `infra/network_stack.py` | ✅ CDK |
 | KMS con rotación anual + Secrets Manager | `infra/security_stack.py` | ✅ CDK |
 | Redis 7.1 Multi-AZ con TLS y Aurora PostgreSQL 16 Serverless v2, ambos en subredes aisladas | `infra/data_stack.py` | ✅ CDK |
 | EKS 1.29, nodegroup Graviton3, Kong, Keycloak, External Secrets, metrics-server | `infra/compute_stack.py` | ✅ CDK |
+| ECR, Security Hub, GuardDuty e Inspector | `infra/` | ⚠️ propuestos en el diseño, pendientes de stack propio |
 | Deployment, Service, HPA, PDB, NetworkPolicy, ServiceMonitor | `deploy/k8s/` | ✅ manifiestos |
 | Consumidores Kong y plugin de rate limit por canal | `deploy/kong/` | ✅ manifiestos |
 | Prometheus + Grafana, X-Ray, CloudWatch Logs | sección 7 | ⚠️ diseñado, pendiente de desplegar |
@@ -752,33 +696,23 @@ flowchart LR
 
 ### 1. Ambigüedad: cómo reduces riesgo sin frenar avance
 
-> **Ejemplo concreto**: En este proyecto, el alcance de "multi-tenant" era ambiguo (¿tenant por marca, por región, por canal?). En lugar de bloquear el diseño, definí un **"multi-tenant básico"** (tenant = canal: ecommerce, marketplace, operador) con scopes por canal, y documenté la **deuda técnica** (federación SAML completa → próxima unidad). Esto permitió avanzar con seguridad sin sobre-diseñar.
-
-**Técnica**: Definir el "mínimo viable de seguridad" (scopes por canal) y registrar la ambigüedad como deuda técnica con owner y fecha target.
+> **Ejemplo**: Necesitábamos desplegar semanalmente en un microservicio crítico, pero las auditorías de seguridad manuales tardaban semanas y frenaban todo. Metí la seguridad en el pipeline (SonarCloud y escaneo de imagen en ECR): si aparecía una vulnerabilidad crítica, el pipeline se detenía solo. Para no arriesgar producción con cada release, usamos Canary con Route 53 enviando solo el 5% del tráfico a la versión nueva. Si algo salía mal, el impacto era mínimo y el rollback automático tardaba dos minutos. Así avanzábamos rápido sin exponer a todos los usuarios de golpe.
 
 ### 2. Cómo documentas decisiones para escalar el equipo
 
-> **Ejemplo concreto**: Cada decisión técnica tiene una tabla en el README con: Decisión, Alternativas consideradas, Por qué elegimos esto, Trade-offs. Además, el registro AI-DLC (`aidlc/`) mantiene un trail completo de qué se decidió, por qué y cuándo. Los runbooks (`runbooks.md`) incluyen diagnóstico rápido, causas comunes y verificación post-resolución.
-
-**Técnica**: ADR (Architecture Decision Records) simplificados + runbooks con diagnóstico + documentación "viva" (README actualizado con código).
+> **Ejemplo**: Cuando el equipo de DevOps creció, cada ingeniero aprovisionaba en AWS a su manera y eso generaba errores repetidos y consultas constantes. En vez de escribir manuales, convertí las decisiones en módulos de Terraform. Armé un módulo de clústeres que ya traía las reglas de seguridad aplicadas, así que nadie tenía que recordarlas de memoria. A eso le sumé un `ARCHITECTURE.md` en el propio repositorio con el diagrama de la infraestructura. Un ingeniero nuevo consume el módulo aprobado y lee el contexto donde está el código, sin manuales de 50 páginas ni preguntarme cómo se configura la red.
 
 ### 3. "Rápido" vs seguridad/operación: cómo negocias
 
-> **Ejemplo concreto**: El equipo de producto pedía "deploy en 2 semanas". Yo propuse "deploy en 2 semanas, pero con gates de seguridad no negociables": ktlint 0 violaciones, cobertura ≥80%, ArchUnit 0 violaciones, sondas públicas, rate limiting, correlation-id. El compromiso: el MVP de código se entrega en 2 semanas, pero los quality gates son bloqueantes en CI. Si algo falla, no se mergea. Esto evitó un "deploy rápido" que luego generaría incidentes.
-
-**Técnica**: Negociar el *scope* (qué se entrega), no la *calidad* (cómo se entrega). Quality gates son no-negociables; features son ajustables.
+> **Ejemplo**: Desarrollo pedía permisos de Administrador en AWS para probar rápido y Seguridad lo veía como un riesgo inaceptable. Monté una cuenta sandbox aislada y le apliqué SCPs desde AWS Organizations: quedaban bloqueadas por defecto la creación de buckets S3 públicos y de bases de datos sin cifrar. Desarrollo obtuvo la velocidad que buscaba sin abrir tickets, y Seguridad tuvo el cumplimiento garantizado por política, no por vigilancia.
 
 ### 4. Desacuerdos técnicos fuertes: cómo los gestionas
 
-> **Ejemplo concreto**: En este proyecto, hubo desacuerdo sobre si usar Kafka (event-driven) o REST síncrono para las notificaciones. El equipo de desarrollo prefería REST (más simple). Yo propuse Kafka para webhooks (async, no bloquea flujo principal) pero REST para consulta stock (sync, respuesta inmediata). La resolución: definir una **regla explícita** ("Sync cuando el cliente necesita respuesta inmediata; Async cuando el procesamiento puede ocurrir en segundo plano") y documentarla en la sección de decisiones. Esto evitó debate continuo.
-
-**Técnica**: Definir reglas explícitas con criterios claros, documentarlas, y referenciarlas en code reviews ("¿cumple la regla sync/async?").
+> **Ejemplo**: Discutimos cómo procesar archivos de transacciones que llegaban de forma impredecible. El otro líder técnico quería un clúster de contenedores en EKS porque era lo que el equipo ya conocía. Yo proponía S3, SQS y Lambda: no tiene sentido pagar por nodos encendidos esperando archivos. El debate se trabó en opiniones, así que lo llevé a números. Comparé costo y esfuerzo operativo de ambas opciones y quedó claro que el cluster encendido de madrugada, con tráfico en cero, costaba unas diez veces más que Lambda, además del parcheo de sistema operativo que Lambda nos ahorraba. Con la comparación sobre la mesa, el otro líder aceptó. Lo resolvimos con costos, no con insistencia.
 
 ### 5. Cómo mantienes calidad sin volver el delivery lento
 
-> **Ejemplo concreto**: Quality gates en CI (ktlint, tests, coverage, ArchUnit) son **automáticos y bloqueantes**. Un developer no puede merge sin que pasen. Esto elimina revisiones manuales de estilo y calidad básica. Además, TDD (tests primero) reduce bugs en producción. El resultado: 59 tests, 95% cobertura, 0 violaciones ArchUnit, todo en CI. El delivery no se ralentiza porque los gates son automáticos, no manuales.
-
-**Técnica**: Automatizar quality gates (CI/CD), TDD real (tests primero), ArchUnit (arquitectura verificable), y no negociar umbrales (80% coverage mínimo).
+> **Ejemplo**: QA era un cuello de botella porque probaba todo a mano antes de producción. Configuramos quality gates en SonarCloud: nada se fusionaba a la rama principal sin 80% de cobertura de pruebas unitarias y cero code smells críticos. La calidad pasó a ser una barrera automática; si el código no cumplía, el desarrollador lo sabía en cinco minutos. Subí el estándar sin que ningún revisor humano tuviera que frenar el flujo.
 
 ---
 
