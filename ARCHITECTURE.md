@@ -192,6 +192,92 @@ flowchart TB
 | **Breaking Changes** | Nueva versión mayor (`/v2/`), mantener v1 mínimo 6 meses |
 | **Contract First** | OpenAPI 3.0 generado desde código (SpringDoc), validado en CI |
 
+### 3.4 Infraestructura Propuesta en AWS
+
+Topología sobre la región `us-east-1`. Cada bloque tiene su contraparte en
+código del repo: `infra/network_stack.py`, `infra/security_stack.py`,
+`infra/data_stack.py` y `infra/compute_stack.py`, además de los manifiestos de
+`deploy/k8s/` y `deploy/kong/`.
+
+```mermaid
+flowchart TB
+    subgraph EXT["Fuera de AWS"]
+        CLIENT["Canales<br/>e-commerce · App · Marketplace"]
+        SAP["SAP ERP on-prem<br/>OData API_STOCK"]
+        CI["GitHub Actions<br/>lint · tests · coverage · build ARM64"]
+    end
+
+    subgraph AWS["AWS · us-east-1"]
+        subgraph VPC["VPC · 3 zonas de disponibilidad · 3 NAT Gateway · Flow Logs"]
+            subgraph PUB["Subredes públicas"]
+                LB["Elastic Load Balancing<br/>Kong proxy Service"]
+                NAT["NAT Gateway x3"]
+            end
+
+            subgraph EKS["Subredes privadas con salida · EKS 1.29 · nodegroup c7g Graviton3 · 2 a 6 nodos"]
+                KONG["Kong Ingress · 2 réplicas<br/>JWT · rate limit 100 req/s por canal"]
+                APP["stock-price-adapter · 2 réplicas<br/>HPA · PDB · NetworkPolicy"]
+                KC["Keycloak 24 · 2 réplicas<br/>realm andes-retail"]
+                ESO["External Secrets Operator"]
+                PROM["Prometheus + Grafana<br/>ServiceMonitor listo · pendiente de desplegar"]
+            end
+
+            subgraph ISO["Subredes aisladas · sin ruta a Internet"]
+                REDIS[("ElastiCache Redis 7.1<br/>Multi-AZ · TLS · KMS")]
+                AURORA[("Aurora PostgreSQL 16<br/>Serverless v2 · KMS<br/>almacén de Keycloak")]
+            end
+
+            NAT["NAT Gateway x3"]
+        end
+
+        KMS["KMS · rotación de claves"]
+        SM["Secrets Manager<br/>credenciales SAP · admin Keycloak"]
+        ECR["ECR · imagen arm64"]
+        OBS["X-Ray + CloudWatch Logs<br/>mes 5 · pendiente de instrumentar"]
+    end
+
+    CLIENT -->|HTTPS + JWT| LB
+    LB --> KONG
+    KONG --> APP
+    APP -->|caché fresh 60s| REDIS
+    APP -->|ACL · circuit breaker| NAT
+    NAT -->|OData| SAP
+    APP -->|validación JWKS| KC
+    KC -->|PostgreSQL 5432| AURORA
+    ESO -->|sincroniza secretos| SM
+    CI -->|build y push| ECR
+    ECR -->|pull imagen| APP
+    PROM -->|scrape métricas| APP
+    KMS --> REDIS
+    KMS --> AURORA
+    KMS --> SM
+    APP -.->|logs y trazas| OBS
+
+    style AWS fill:#fafafa,stroke:#424242
+    style VPC fill:#f5f5f5,stroke:#37474f
+    style PUB fill:#fff3e0,stroke:#ef6c00
+    style EKS fill:#e3f2fd,stroke:#1565c0
+    style ISO fill:#fce4ec,stroke:#c2185b
+    style OBS fill:#eceff1,stroke:#607d8b,stroke-dasharray: 5 5
+```
+
+| Capa | Dónde está en el repo | Estado |
+|---|---|---|
+| VPC 3 AZ, subredes públicas/privadas/aisladas, 3 NAT, Flow Logs | `infra/network_stack.py` | ✅ CDK |
+| KMS con rotación anual + Secrets Manager | `infra/security_stack.py` | ✅ CDK |
+| Redis 7.1 Multi-AZ con TLS y Aurora PostgreSQL 16 Serverless v2, ambos en subredes aisladas | `infra/data_stack.py` | ✅ CDK |
+| EKS 1.29, nodegroup Graviton3, Kong, Keycloak, External Secrets, metrics-server | `infra/compute_stack.py` | ✅ CDK |
+| Deployment, Service, HPA, PDB, NetworkPolicy, ServiceMonitor | `deploy/k8s/` | ✅ manifiestos |
+| Consumidores Kong y plugin de rate limit por canal | `deploy/kong/` | ✅ manifiestos |
+| Prometheus + Grafana, X-Ray, CloudWatch Logs | sección 7 | ⚠️ diseñado, pendiente de desplegar |
+| Publicación automática de la imagen ARM64 a ECR | `.github/workflows/ci.yml` | ⚠️ el build ya corre en CI, falta el push |
+
+El medio de conectividad hacia el SAP on-prem (VPN Site-to-Site, Direct Connect
+u OData expuesto sobre Internet) se confirma con el cliente; hasta entonces el
+diagrama muestra solo el egress de las subredes privadas. El bus de eventos entra
+en el mes 3 del roadmap y la capa completa de observabilidad (Grafana, X-Ray,
+CloudWatch) en el mes 5.
+
 ---
 
 ## 4. Diseño de la Capa de Interoperabilidad
