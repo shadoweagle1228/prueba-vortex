@@ -95,9 +95,104 @@ Todo diseño se para sobre algo. Estos son los supuestos que asumimos, y qué pa
 
 ## 3. Arquitectura de Alto Nivel
 
-### 3.1 Cómo se ve el sistema desde afuera
+### 3.1 Cómo está hoy: integraciones punto a punto
 
-Este primer diagrama muestra quién usa el sistema y con quién tiene que hablar. A la izquierda están los canales de venta; en el centro, la capa que construimos; a la derecha, los sistemas que ya existen en la empresa.
+Antes de proponer nada, conviene ver el punto de partida. Hoy cada canal se conecta
+directamente con cada sistema interno, y cada conexión se construyó por separado.
+El resultado es una telaraña donde nadie tiene una visión completa de lo que pasa.
+
+```mermaid
+flowchart TB
+    EC_B["E-commerce y Apps"]
+    MK_B["Marketplaces"]
+    OPS_B["Operador Interno"]
+
+    SAP_B["ERP SAP<br/>Stock y Precios"]
+    WMS_B["WMS<br/>Fulfillment"]
+    OMS_B["OMS<br/>Órdenes"]
+    CRM_B["CRM<br/>Clientes"]
+
+    EC_B -->|Petición directa, sin caché| SAP_B
+    EC_B -->|Autenticación propia| WMS_B
+    EC_B -->|Llamadas frágiles| OMS_B
+
+    MK_B -->|Petición directa, sin caché| SAP_B
+    MK_B -->|Autenticación propia| OMS_B
+
+    OPS_B -->|Petición directa| CRM_B
+    OPS_B -->|Petición directa| WMS_B
+
+    style SAP_B fill:#ef9a9a,stroke:#b71c1c
+```
+
+Cada línea de este diagrama es un problema en potencia. Todas las consultas de
+stock y precio llegan directo al ERP sin nada que las contenga, así que un pico de
+tráfico lo satura. Cada canal resolvió la autenticación a su manera, de modo que
+hay tantos esquemas de seguridad como integraciones. Y como nada pasa por un punto
+común, no hay forma de saber cuántas consultas se hicieron, cuánto tardaron ni
+dónde falló una en particular. Cuando el ERP se cae, se cae todo lo que depende de
+él, que es casi todo.
+
+### 3.2 Cómo queda con la capa nueva
+
+El cambio de fondo es simple de enunciar: en lugar de conectar cada canal con cada
+sistema, todos pasan por una capa intermedia. Esa capa es la que concentra el
+control de acceso, la caché y la protección de los sistemas antiguos.
+
+```mermaid
+flowchart TB
+    EC_A["E-commerce y Apps"]
+    MK_A["Marketplaces"]
+    OPS_A["Operador Interno"]
+
+    GW_A["Kong API Gateway<br/>Seguridad unificada y límites de tráfico"]
+    INT_A["Capa de Integración<br/>Lógica de negocio y adaptadores"]
+
+    CACHE_A[("Redis, caché en dos niveles<br/>Stock y precios al instante")]
+    KAFKA_A[("Kafka, bus de eventos<br/>Desacoplamiento asíncrono")]
+
+    SAP_A["ERP SAP"]
+    WMS_A["WMS"]
+    OMS_A["OMS"]
+    CRM_A["CRM"]
+
+    EC_A -->|HTTPS + credencial| GW_A
+    MK_A -->|HTTPS + credencial| GW_A
+    OPS_A -->|HTTPS + credencial| GW_A
+
+    GW_A --> INT_A
+
+    INT_A <-->|Resuelve la mayoría de las lecturas sin tocar el ERP| CACHE_A
+    INT_A -->|Avisos que no bloquean la venta| KAFKA_A
+
+    INT_A -->|Tráfico controlado y protegido| SAP_A
+    INT_A -->|Tráfico controlado y protegido| WMS_A
+    INT_A -->|Tráfico controlado y protegido| OMS_A
+    INT_A -->|Tráfico controlado y protegido| CRM_A
+
+    style GW_A fill:#fff3e0,stroke:#ef6c00
+    style INT_A fill:#e3f2fd,stroke:#1565c0
+    style CACHE_A fill:#fce4ec,stroke:#c2185b
+```
+
+La diferencia se nota en varios frentes a la vez. Los canales ya no llegan al ERP:
+se autentican una sola vez y con un solo estilo, y la caché resuelve la mayor parte
+de las consultas de lectura antes de que salgan del sistema. Cuando sí hay que
+consultar a un sistema interno, la llamada sale con un límite de tiempo, con un
+cupo máximo de llamadas simultáneas y con un corte automático si ese sistema viene
+fallando. Y todo lo que no necesita respuesta inmediata se publica como aviso, de
+modo que un sistema lento no detenga la compra.
+
+Lo que se gana con este cambio no es solo velocidad. Los sistemas internos quedan
+protegidos por diseño, la integración de un canal nuevo deja de empezar de cero, y
+por primera vez hay un punto único donde medir qué está pasando.
+
+### 3.3 El sistema completo, con todos sus actores
+
+El diagrama anterior era el contraste: qué cambia al pasar de conexiones directas a
+la capa intermedia. Este es el sistema en su forma final, con todos los actores que
+aparecen más adelante en el documento, incluidos la pasarela de pagos y los avisos
+que vuelven hacia los canales.
 
 ```mermaid
 flowchart TB
@@ -142,7 +237,7 @@ flowchart TB
 
 Lo importante de este dibujo es que **ningún canal habla directamente con el ERP**. Todo pasa por la capa intermedia, que es donde se decide qué se responde, de dónde se saca el dato y qué se hace si el sistema de atrás no contesta.
 
-### 3.2 Las piezas y qué hace cada una
+### 3.4 Las piezas y qué hace cada una
 
 | Pieza | Para qué está | Con qué se construyó | Cómo crece |
 |---|---|---|---|
@@ -154,7 +249,7 @@ Lo importante de este dibujo es que **ningún canal habla directamente con el ER
 | **Clúster de cómputo** | Es la plataforma donde corre todo lo anterior. Reparte el trabajo entre servidores y agrega capacidad cuando hace falta. | Kubernetes sobre hardware ARM | Escala solo según uso |
 | **Base de datos Aurora** | Guarda usuarios, credenciales y metadatos de órdenes. No es la base del negocio: no almacena el stock. | PostgreSQL gestionado con escalado automático | Sube y baja según lo que se use |
 
-### 3.3 Decisiones clave y qué costo tienen
+### 3.5 Decisiones clave y qué costo tienen
 
 #### Cuándo respondemos en el momento y cuándo en segundo plano
 
@@ -203,7 +298,7 @@ Un canal no puede despertar un día y descubrir que el campo que usaba ya no exi
 | **Cambios que rompen** | Obligan a una versión nueva, y la anterior sigue viva al menos seis meses. |
 | **Contrato primero** | La documentación de la API se genera del código y se valida automáticamente; no puede quedar desactualizada. |
 
-### 3.4 Infraestructura propuesta en AWS
+### 3.6 Infraestructura propuesta en AWS
 
 El despliegue se propone sobre la región `us-east-1` con dos zonas de
 disponibilidad, para que la caída de una no detenga el servicio. La idea central
@@ -239,6 +334,72 @@ Internet o exponer el SAP a través de Internet. Hasta que eso se defina, el
 diagrama solo muestra la salida normal de los segmentos privados. El bus de eventos
 entre sistemas llega en el tercer mes del plan y la capa completa de monitoreo en
 el quinto.
+
+### 3.7 El recorrido completo de una consulta de stock
+
+Los diagramas anteriores muestran las piezas y cómo se conectan. Este muestra qué
+pasa, paso a paso, cuando un canal pregunta por el stock de un producto. Vale la
+pena seguirlo entero porque en este recorrido está la razón de ser del diseño: cada
+respuesta posible tiene su camino previsto.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Cliente as Canal (App/Web)
+    participant Kong as Puerta de entrada
+    participant App as Servicio de stock
+    participant Redis as Caché en memoria
+    participant SAP as ERP SAP
+
+    Cliente->>Kong: Consulta de stock de un producto (con credencial)
+    Note over Kong: Control en la puerta
+    Kong->>Kong: Verifica la firma de la credencial
+    Kong->>Kong: Verifica el límite de tráfico del canal
+    Kong->>App: Pasa la petición con su identificador de seguimiento
+
+    Note over App: Lógica de negocio
+    App->>App: Verifica que el canal tenga permiso para ver stock
+    App->>App: Valida el formato de la petición
+
+    App->>Redis: Busca el dato reciente (vence en 60 segundos)
+
+    alt El dato está en caché
+        Redis-->>App: Devuelve el stock guardado
+        App-->>Cliente: Responde con el stock, indicando que salió de caché
+    else El dato no está o venció
+        Note over App, SAP: Protección del sistema antiguo
+        App->>SAP: Consulta al ERP (con límite de espera y cupo de llamadas)
+
+        alt El ERP responde bien
+            SAP-->>App: Devuelve el stock en su formato original
+            App->>App: Traduce el dato al formato propio
+            App->>Redis: Guarda el dato reciente (1 minuto) y el de respaldo (1 hora)
+            App-->>Cliente: Responde con el stock, indicando que salió del ERP
+        else El ERP falla, responde lento o el corte automático está activo
+            SAP--xApp: No responde a tiempo o devuelve error
+            App->>Redis: Busca el dato de respaldo (vence en 1 hora)
+
+            alt Hay dato de respaldo
+                Redis-->>App: Devuelve el último stock conocido
+                App-->>Cliente: Responde con ese stock, indicando que es un valor de respaldo
+            else No hay nada guardado
+                App-->>Cliente: Avisa que el dato no está disponible y cuándo reintentar
+            end
+        end
+    end
+```
+
+Lo que conviene mirar de este diagrama son las tres respuestas posibles, porque
+cada una representa un nivel distinto de salud del sistema:
+
+1. **Sale de caché.** Es el caso más común y el más rápido: la consulta se resuelve dentro de la capa nueva y el ERP ni se entera. Es lo que permite sostener el volumen de una promo.
+2. **Sale del ERP.** La caché no tenía el dato, así que se consultó el sistema antiguo, se tradujo su formato y se guardó para la próxima. La respuesta lleva el dato fresco.
+3. **Sale del respaldo.** El ERP no respondió, pero había un valor guardado de antes. El canal recibe stock con un poco de antigüedad en lugar de un error. Solo cuando no hay absolutamente nada guardado se responde que el dato no está disponible, indicando cuándo conviene reintentar.
+
+Ese tercer caso es el que marca la diferencia con una integración tradicional. Un
+sistema que solo consulta al ERP se cae cuando el ERP se cae. Este, en cambio, se
+degrada: sigue vendiendo con un dato algo viejo y reserva el error para cuando de
+verdad no hay nada que mostrar.
 
 ---
 
