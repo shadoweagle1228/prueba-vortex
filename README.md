@@ -1,33 +1,37 @@
 # Andes Retail — Capa de Integración de Stock
 
-> **Documento de arquitectura completo**: Ver [`ARCHITECTURE.md`](./ARCHITECTURE.md) para el diseño detallado (9 secciones + diagramas + decisiones + roadmap + liderazgo técnico).
+> El diseño completo está en [`ARCHITECTURE.md`](./ARCHITECTURE.md): 9 secciones con los diagramas, las decisiones y el plan de crecimiento.
 
-> **Walking Skeleton** — Primer incremento entregable del proyecto de modernización de la capa de interoperabilidad de Andes Retail. Un slice vertical completo que va desde el canal digital autenticado hasta el ERP legacy, pasando por rate-limiting, caché dual, circuit breaker y observabilidad completa.
+> **Qué es este repositorio.** Es el primer incremento del proyecto que conecta los canales digitales de Andes Retail con sus sistemas internos. No es un prototipo ni una maqueta: es un pedazo real del sistema, funcionando de punta a punta, que sirve para comprobar en código que las decisiones de arquitectura se sostienen antes de construir el resto.
 
 ---
 
-## ¿Qué se construyó?
+## Por qué existe
 
-Este repositorio contiene el **primer incremento real (Walking Skeleton)** de la capa de interoperabilidad que conecta los canales digitales de Andes Retail (e-commerce, marketplaces, apps móviles) con los sistemas legacy: ERP SAP (stock/precios), WMS (reservas), OMS (órdenes) y CRM (clientes).
+Andes Retail vende por varios canales (la tienda web, la aplicación, los marketplaces) y todos ellos necesitan lo mismo: saber cuánto stock hay, a qué precio y si una compra se puede registrar. Hoy cada canal pregunta directamente al ERP, que es un sistema antiguo pensado para otro volumen de consultas. En una promo fuerte esas consultas se multiplican y el ERP se cae. Y cuando el ERP se cae, se cae la venta completa.
 
-**Lo que entrega este incremento:**
+Este primer entregable resuelve el caso más doloroso y más frecuente: **consultar stock**. Lo hace poniendo una capa intermedia entre el canal y el ERP, que guarda los datos en memoria, controla cuánto tráfico llega y, sobre todo, sigue respondiendo cuando el ERP no contesta.
 
-| Componente | Qué hace | Estado |
+Un detalle que parece menor y no lo es: si el ERP está caído, el sistema no devuelve un error. Devuelve el último stock conocido, marcándolo como tal. Mostrar un stock de hace media hora es mucho mejor que mostrarle un error al cliente que está por comprar.
+
+## Qué quedó funcionando
+
+| Pieza | Qué resuelve | Estado |
 |---|---|---|
-| **`stock-price-adapter`** | Microservicio Kotlin + Spring Boot 3.2 que expone `GET /v1/inventory/stock/{sku}` — consulta de stock disponible por SKU/bodega con autenticación OAuth2/JWT | ✅ Funcional, probado, documentado |
-| **Infraestructura (AWS CDK)** | VPC multi-AZ, EKS 1.29, ElastiCache Redis 7.1 Multi-AZ, Aurora PostgreSQL 16 Serverless v2, KMS, Secrets Manager | ✅ Sintetiza y despliega |
-| **Kubernetes (K8s)** | Deployment, HPA, NetworkPolicy, ServiceMonitor, PDB, Kong Ingress, Keycloak, External Secrets | ✅ Manifiestos listos |
-| **CI/CD** | GitHub Actions: lint (ktlint), tests, coverage gate (≥80%), build imagen ARM64, artifact upload | ✅ Pipeline verde |
-| **Observabilidad** | Métricas Prometheus, JSON logs con correlation-id, health probes (implementados en el servicio); Golden Signals dashboards, 20+ alarmas, SLOs (9), log queries, anomaly detection (documentados en `aidlc/.../operation/observability-setup/`) | ✅ Implementado en app + documentado en ops |
-| **Runbooks & Incident Response** | 9 runbooks CRITICAL escritos (RB-001…RB-008, RB-018), 9 WARNING en roadmap (RB-009…RB-017), escalation matrix (4 niveles), incident plan, post-mortem template | ✅ Críticos listos |
+| **Servicio de stock** | Microservicio en Kotlin y Spring Boot que responde cuánto stock hay de un producto en una bodega. Cada consulta pasa por autenticación: no responde a quien no tenga permiso. | Funcional, con pruebas y documentación |
+| **Infraestructura como código** | Toda la plataforma se describe en archivos, no se arma a mano: red separada por niveles de exposición, clúster de contenedores, caché con redundancia, base de datos, gestión de credenciales. | Se despliega con un comando |
+| **Configuración del clúster** | Los archivos que definen cómo se ejecuta el servicio: cuántas instancias, cuándo escalar, cómo se aísla de otros servicios, cómo se expone. | Listos para aplicar |
+| **Integración continua** | Cada cambio pasa automáticamente por revisión de estilo, pruebas y un mínimo de cobertura. Si no cumple, no se fusiona. Además se construye la imagen del servicio. | Pipeline en verde |
+| **Observabilidad** | El servicio reporta métricas, escribe registros estructurados y expone verificaciones de salud. Los tableros de monitoreo, la trazabilidad detallada y los objetivos de servicio están diseñados y documentados; falta instrumentarlos en el ambiente real. | Funcionando en el servicio, documentado para el resto |
+| **Procedimientos de incidente** | Qué hacer paso a paso cuando falla cada cosa crítica: el ERP deja de responder, el cupo de llamadas se agota, aparecen errores. | 9 procedimientos críticos escritos |
 
-> **Nota importante**: Este es un *Walking Skeleton* — no es el sistema completo. Entrega el **hilo conductor** end-to-end para validar arquitectura, decisiones tecnológicas y procesos operativos *antes* de invertir en features completas (reservas, precios, multi-tenant, etc.).
+> **Esto no es el sistema completo.** Es el hilo que va de un extremo al otro, con la profundidad justa para validar la arquitectura, las tecnologías y la forma de operar antes de invertir en el resto. Lo que falta está listado al final.
 
 ---
 
-## Arquitectura
+## Cómo está armado
 
-### Vista general (Clean Architecture + Cloud-Native)
+### Vista general
 
 ```mermaid
 flowchart TB
@@ -66,7 +70,9 @@ flowchart TB
     style REDIS fill:#fce4ec,stroke:#c2185b
 ```
 
-### Clean Architecture — Reglas de dependencia
+El canal nunca habla con el ERP. Habla con la capa nueva, que decide de dónde sacar el dato y qué hacer cuando el sistema de atrás no responde.
+
+### Cómo se organiza el código
 
 ```mermaid
 flowchart LR
@@ -89,128 +95,101 @@ flowchart LR
     style PORTS fill:#f3e5f5,stroke:#7b1fa2
 ```
 
-**Regla de oro**: *El dominio no conoce nada de afuera. La aplicación solo conoce puertos (interfaces). La infraestructura implementa esos puertos.* Verificada en CI con **ArchUnit** (0 violaciones).
+El punto central es que **el corazón del sistema no sabe que existe Spring, Redis ni el ERP**. Solo conoce las reglas del negocio. Todo lo externo se conecta por enchufes intercambiables. Eso significa que cambiar Redis por otra cosa, o el ERP por otro, no obliga a tocar la lógica. Esta regla no queda en un documento: se verifica automáticamente en cada build y hoy no hay ninguna violación.
 
 ---
 
-## Decisiones Técnicas Clave (y por qué)
+## Decisiones que vale la pena explicar
 
-| Decisión | Alternativas consideradas | Por qué elegimos esto | Trade-offs |
-|---|---|---|---|
-| **Kotlin + Spring Boot 3.2** | Java 17/21, Quarkus, Micronaut | Equipo conoce Spring; Kotlin reduce boilerplate; Spring Boot 3 = Jakarta EE 10, GraalVM ready | Curva de aprendizaje Kotlin (mínima para devs Java) |
-| **Clean Architecture estricta** | Arquitectura por capas tradicional, Hexagonal sin ArchUnit | Regla de dependencia verificable en CI (ArchUnit); dominio puro testeable sin Spring; facilita migración futura | Más archivos/abstracción inicial; overkill para servicios triviales |
-| **Caché dual (Fresh + Stale)** | Caché simple con TTL único; Cache-aside sin fallback | Requisito de negocio: *nunca* mostrar stock 0 si ERP caído; SLA 99.9% exige degradación controlada | Complejidad en invalidación; dos claves por SKU/bodega |
-| **Circuit Breaker + Bulkhead (Resilience4j)** | Hystrix (deprecated), Spring Retry, custom | Resilience4j es estándar actual; integra con Spring Boot 3; métricas Prometheus nativas; annotations declarativas | Configuración verbosa en YAML; curva de aprendizaje |
-| **Keycloak 24 sobre Aurora (no PostgreSQL efímero)** | Keycloak en Docker Compose, Cognito, Auth0 | Requisito PCI-DSS: datos de auth en BD gestionada, cifrada, con backup; multi-tenant real desde día 1 | Más complejo que Cognito; requiere operar Keycloak |
-| **Kong para Rate Limiting + Ingress** | AWS ALB + WAF, NGINX Ingress, Traefik | Rate limiting nativo por consumer; plugins extensibles; declarativo via CRDs; ya lo usamos en prod | Curva de aprendizaje Kong; plugins Redis backend requieren config |
-| **Aurora PostgreSQL 16 Serverless v2** | Aurora Provisioned, RDS PostgreSQL, DynamoDB | Escalado automático 0.5-128 ACU; pay-per-use; Multi-AZ nativo; PostgreSQL 16 | Cold start ~1-2s; más caro que provisioned en carga constante alta |
-| **EKS Graviton3 (c7g.medium)** | x86 (m6i), Fargate, EC2 Spot sin EKS | 20-30% mejor precio/rendimiento; ARM64 nativo en Spring Boot 3; Spot para ahorro | Imágenes ARM64 requeridas; algunos libs nativos pueden fallar |
-| **Caché Fresh (60s) + Stale (3600s)** | TTL único 300s; Solo Fresh | Negocio: stock cambia poco; 60s = freshness aceptable; Stale = 1h para supervivencia | Stale puede servir datos de hasta 1h; requiere invalidación cuidadosa |
-| **JWT RS256 + JWKS (Keycloak)** | HS256 shared secret, JWT opaco | Estándar OIDC; rotación de claves automática; validación distribuida sin BD | JWKS resolution añade latencia primera vez; cache de claves crítico |
-| **Problem+json (RFC 7807)** | Spring Boot default error, custom JSON | Estándar IETF; clientes pueden parsear `type`, `instance`, `retry-after`; consistente | Requiere handler custom para 401/403/500; más código que default |
-| **Correlation-ID (X-Correlation-ID)** | Solo MDC, solo header, sin propagación | Trazabilidad end-to-end: request → Kong → App → Redis → SAP → response; logs correlacionables | Header opcional del cliente; generar UUID si no viene; longitud max 128 |
-| **Observabilidad: Prometheus + X-Ray + CloudWatch** | Solo CloudWatch, Datadog, New Relic | Prometheus = estándar CNCF, gratis en EKS; X-Ray = tracing AWS nativo; CloudWatch = logs/alarms base | Tres herramientas; correlación manual entre ellas (exemplars ayuda) |
-| **ARM64 Docker + Buildx** | Solo AMD64, solo JIB | Graviton3 en prod = ARM64; Buildx = multi-platform local; JIB = layer caching | Buildx más lento en CI; requiere QEMU en runners x86 |
+| Qué se decidió | Qué se evaluó antes | Por qué quedó así |
+|---|---|---|
+| **Kotlin con Spring Boot** | Java, Quarkus, Micronaut | El equipo ya trabaja con Spring, así que no hay curva de aprendizaje grande. Kotlin reduce bastante el código repetitivo y la versión de Spring es la actual, con soporte a largo plazo. |
+| **Organización del código por responsabilidad, verificada automáticamente** | Capas tradicionales, sin verificación | La regla de que el negocio no depende de nadie se comprueba en cada build. Sin esa verificación, en seis meses cualquier atajo la rompe. |
+| **Dos niveles de caché, no uno** | Un solo nivel con un tiempo de vida | Es lo que permite no mostrarle nunca un stock en cero a un cliente solo porque el ERP falló. El dato reciente sirve para operar; el de respaldo, para sobrevivir a una caída. |
+| **Corte automático hacia el ERP** | Confiar en reintentos, hacerlo a mano | Un servicio que ya está mal no se arregla insistiéndole. El corte automático deja de llamar cuando detecta fallos y evita arrastrar la caída. |
+| **Keycloak con base de datos gestionada** | Keycloak en un contenedor local, Cognito, Auth0 | Los datos de autenticación no pueden vivir en algo efímero. Necesitan respaldo, cifrado y redundancia desde el primer día. |
+| **Kong en la puerta de entrada** | Balanceador de AWS, otros proxys | Permite limitar el tráfico por cliente de forma nativa, y las reglas se declaran en archivos en lugar de configurarse a mano. |
+| **Base de datos que escala sola** | Base de datos con capacidad fija | El sistema tiene horas de mucho uso y horas de poco. Pagar por capacidad reservada las 24 horas no tiene sentido para este patrón. |
+| **Procesadores ARM en el clúster** | Procesadores tradicionales | Rinden más por el mismo dinero y el servicio ya está preparado para esa arquitectura. |
+| **Formato estándar de errores** | El formato por defecto del framework | Con un formato único, cualquier canal entiende cualquier error sin tener que interpretar estructuras distintas según el caso. |
+| **Un identificador de seguimiento por petición** | Registros sueltos sin relación | Es lo que permite reconstruir la historia completa de una compra cuando algo sale mal. Sin eso, investigar un problema es adivinar. |
 
 ---
 
-## Beneficios para la Aplicación y el Negocio
+## Qué gana el negocio
 
-### 1. **Resiliencia real**
-- **Circuit Breaker** evita cascada de fallos cuando SAP se ralentiza o cae
-- **Bulkhead** aísla el pool de conexiones SAP (máx 20 concurrentes) — el resto de la app sigue viva
-- **Stale-cache** sirve el último dato conocido (hasta 1h) si ERP cae — el cliente ve stock, no error 500
-- **Fail-closed**: si no hay fresh ni stale → 503 con `Retry-After: 5` (el cliente sabe cuándo reintentar)
+**Menos caídas en los momentos que más importan.** Cuando el ERP se satura, el sistema sigue vendiendo. Solo se bloquea la consulta cuando de verdad no hay ningún dato guardado, que es el caso poco frecuente.
 
-### 2. **Seguridad by Default (PCI-DSS ready)**
-- **Zero Trust**: Todo requiere JWT válido (excepto health checks)
-- **Scopes granulares**: `inventory:read` para stock, `metrics:read` para Prometheus
-- **Rate limiting perimetral**: 100 req/s por consumer en Kong (no en la app)
-- **Cifrado**: TLS 1.3 everywhere, KMS para datos en reposo, Secrets Manager para credenciales
-- **No PII en logs**: Correlation-ID en lugar de user IDs; sanitización automática
+**Respuesta rápida.** La mayoría de las consultas se resuelve en memoria, sin tocar el ERP. Cuando hay que consultarlo, hay un límite de espera estricto para que su lentitud no llegue al cliente.
 
-### 3. **Observabilidad accionable (no "dashboard theater")**
-- **Golden Signals** (latencia, tráfico, errores, saturación) en un dashboard
-- **SLOs medibles**: 9 SLOs con error budgets y burn-rate alerting
-- **Distributed Tracing**: Correlation-ID → X-Ray → logs → métricas (exemplars)
-- **Anomaly Detection**: Baseline automático + alertas estadísticas (no solo umbrales fijos)
+**Nada de errores confusos.** El cliente ve si hay stock o no. Nunca ve un error técnico porque un sistema interno esté teniendo un mal día.
 
-### 4. **Arquitectura evolutiva**
-- **Puertos bien definidos**: Cambiar Redis → DynamoDB, SAP → otro ERP, sin tocar dominio
-- **Feature Flags preparadas**: Stale-cache, Circuit Breaker, nuevo mapper — activables sin deploy
-- **Multi-tenant auth base**: Keycloak realm + 3 clients + scopes → listo para federación SAML/OIDC
-- **Event-driven ready**: Contrato C-01 incluye `etag` y `lastUpdated` → futuro Kafka `stock.changed`
+**Integrar un canal nuevo deja de ser un proyecto.** Un canal nuevo se conecta a algo que ya existe. Antes, cada integración se diseñaba desde cero.
 
-### 5. **Costos optimizados desde día 1**
-- **Graviton3**: ~30% menos costo por request vs x86 equivalente
-- **Aurora Serverless v2**: Paga solo lo que usas (0.5 ACU idle)
-- **Spot-ready**: Node groups configurados para Spot + tolerations
-- **Savings Plans ready**: Tagging strategy lista para comprar 1yr/3yr
+**Poder responder qué pasó.** Cada operación queda registrada de forma tal que se puede reconstruir su recorrido. Necesario para auditoría y para resolver reclamos con datos, no con suposiciones.
 
-### 6. **Developer Experience**
-- **TDD real**: 59 tests, 95% cobertura, ArchUnit en CI
-- **Local dev**: `docker-compose up` levanta Keycloak + Redis en 30s
-- **Contrato vivo**: OpenAPI generado desde código, validado en tests
-- **Debugging**: Correlation-ID en cada log, trace X-Ray, exemplars Prometheus→Trace
+**Costo bajo control.** Se paga por lo que se usa, y la plataforma se dimensiona según la demanda real del día.
+
+**Seguridad desde el diseño, no como parche.** Todo pasa por un mismo control de identidad, con permisos distintos por canal, cifrado en tránsito y en reposo, y sin datos personales en los registros.
 
 ---
 
-## Próximos Pasos (Roadmap)
+## Qué falta
 
-| Prioridad | Iniciativa | Descripción | Esfuerzo |
-|---|---|---|---|
-| **1** | **Deploy Staging + Load Tests** | `cdk deploy --all --profile staging` + k6 suite (8 test cases) | 1-2 días |
-| **2** | **Stock Reservation API (FR-06)** | `POST/DELETE /v1/inventory/reserve` para checkout/orders | 2-3 semanas |
-| **3** | **Multi-Tenant Auth Completo (FR-11)** | Realm por marca, federación SAML/OIDC, user provisioning | 3-4 semanas |
-| **4** | **Event-Driven Stock Sync** | Kafka topic `stock.changed` → WMS, OMS, Analytics | 2-3 semanas |
-| **5** | **GitOps (ArgoCD)** | Deploy declarativo, drift auto-remediation, preview envs | 2 semanas |
-| **6** | **Multi-Region DR** | Aurora Global DB, Redis Global Datastore, Route53 Failover | 4-6 semanas |
-| **7** | **Chaos Engineering** | Game Days trimestrales (pod kill, Redis failover, Aurora failover) | Continuo |
+| Prioridad | Qué sigue | En qué consiste |
+|---|---|---|
+| **1** | Desplegar en el ambiente de pruebas y probar bajo carga | Levantar la infraestructura y ejecutar las pruebas de carga ya planificadas para confirmar el comportamiento real. |
+| **2** | Reserva de stock | Poder apartar stock en el momento de la compra, no solo consultarlo. Es el paso previo a registrar órdenes. |
+| **3** | Separación completa por marca | Cada marca con sus propios usuarios y permisos, y conexión con el sistema de identidad que la empresa ya tenga. |
+| **4** | Actualización de stock por eventos | Que los cambios de stock se avisen solos a los demás sistemas en lugar de consultarse. |
+| **5** | Despliegue automático | Que los cambios lleguen al ambiente productivo sin intervención manual. |
+| **6** | Recuperación ante caída de una región entera | Poder operar desde otra región si la principal queda fuera de servicio. |
+| **7** | Pruebas deliberadas de fallos | Provocar caídas controladas cada cierto tiempo para comprobar que el sistema responde como se espera. |
 
 ---
 
-## Referencias Rápidas
+## Dónde está cada cosa
 
-| Artefacto | Ubicación |
+| Qué buscas | Dónde está |
 |---|---|
-| **Código fuente** | `services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/` |
-| **Tests** | `services/stock-price-adapter/src/test/kotlin/com/andesretail/stock/` |
-| **Infra CDK** | `infra/app.py`, `infra/network_stack.py`, `infra/security_stack.py`, `infra/data_stack.py`, `infra/compute_stack.py` |
-| **K8s Manifests** | `deploy/k8s/`, `deploy/kong/`, `deploy/k8s/monitoring/` |
-| **CI/CD** | `.github/workflows/ci.yml` |
-| **Runbooks** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/incident-response/runbooks.md` |
-| **Dashboards/Alarmas/SLOs** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/observability-setup/` |
-| **Load Test Plan** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/performance-validation/load-test-plan.md` |
-| **Cost Analysis** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/feedback-optimization/cost-analysis.md` |
-| **Drift Detection** | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/feedback-optimization/drift-report.md` |
-| **Arquitectura completa** | `ARCHITECTURE.md` |
+| Código del servicio | `services/stock-price-adapter/src/main/kotlin/com/andesretail/stock/` |
+| Pruebas | `services/stock-price-adapter/src/test/kotlin/com/andesretail/stock/` |
+| Infraestructura | `infra/app.py`, `infra/network_stack.py`, `infra/security_stack.py`, `infra/data_stack.py`, `infra/compute_stack.py` |
+| Configuración del clúster | `deploy/k8s/`, `deploy/kong/`, `deploy/k8s/monitoring/` |
+| Integración continua | `.github/workflows/ci.yml` |
+| Procedimientos de incidente | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/incident-response/runbooks.md` |
+| Tableros, alertas y objetivos de servicio | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/observability-setup/` |
+| Plan de pruebas de carga | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/performance-validation/load-test-plan.md` |
+| Análisis de costos | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/feedback-optimization/cost-analysis.md` |
+| Detección de desviaciones | `aidlc/spaces/default/intents/261016-andes-retail-interop/operation/feedback-optimization/drift-report.md` |
+| Diseño completo | `ARCHITECTURE.md` |
 
 ---
 
-## Comandos Útiles
+## Cómo se levanta
 
 ```bash
-# Desarrollo local (requiere Docker)
+# Entorno local (requiere Docker)
 docker compose -f deploy/local/docker-compose.yml up -d
 ./gradlew :services:stock-price-adapter:bootRun
 
-# Tests completos + coverage gate
+# Pruebas completas con verificación de cobertura
 ./gradlew ktlintCheck test jacocoTestCoverageVerification jacocoTestReport --no-daemon
 
-# Build imagen ARM64 (para Graviton3)
+# Construir la imagen para procesadores ARM
 docker buildx build --platform linux/arm64 -t stock-price-adapter:local -f services/stock-price-adapter/Dockerfile .
 
-# CDK Deploy (requiere credenciales AWS)
+# Desplegar la infraestructura (requiere credenciales de AWS)
 cd infra
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cdk deploy --all --profile andes-staging
 
-# K8s Deploy
+# Aplicar la configuración del clúster
 kubectl apply -k deploy/k8s/
 kubectl apply -k deploy/kong/
 kubectl apply -k deploy/k8s/monitoring/
 
-# Load Tests (k6)
+# Pruebas de carga
 k6 run load-test.js -e BASE_URL=https://api.andes-retail.example -e TOKEN=<jwt>
 ```

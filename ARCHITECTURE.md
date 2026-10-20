@@ -10,89 +10,94 @@
 
 ## 1. Resumen Ejecutivo
 
-### Problema
+### El problema
 
-AndesRetail opera con integraciones punto a punto entre ERP SAP (on-prem), WMS, OMS, CRM, pasarela de pagos externa, e-commerce y marketplaces. Esto genera:
+Hoy AndesRetail conecta sus sistemas con integraciones hechas a medida, una por cada par de sistemas. El ERP SAP habla con el e-commerce por un camino, con los marketplaces por otro, y el WMS y el OMS tienen los suyos. Ese esquema funciona mientras nada cambie, pero se rompe en cuanto hay presión.
 
-- **Inconsistencias** en stock, precios y estado de órdenes entre sistemas
-- **Incidentes en picos** (promos, Black Friday) que tumban ERP/WMS
-- **Poca trazabilidad** — no hay correlation-id end-to-end ni auditoría
-- **Seguridad inconsistente** — cada integración tiene su propio auth
-- **Fragilidad** — cambios en un sistema rompen otros
+En una promo fuerte, los canales consultan stock y precios miles de veces por minuto y esas consultas llegan directo al ERP, que no está dimensionado para ese volumen. Cuando el ERP se satura, se cae, y con él se cae la venta. A esto se suman otros problemas que se notan más con el tiempo: no hay una forma de seguir un pedido de punta a punta cuando algo falla, cada integración resolvió la autenticación a su manera, y un cambio en un sistema obliga a tocar varios otros.
 
-### Solución propuesta
+### La solución
 
-1. **Capa de interoperabilidad centralizada** (API Gateway + Integration Layer) sobre AWS EKS que expone APIs estandarizadas hacia canales externos y orquesta flujos hacia legacy
-2. **Anti-Corruption Layer (ACL)** por sistema legacy (ERP, WMS, OMS, CRM) con adaptadores que normalizan datos y protegen con Circuit Breaker + Bulkhead
-3. **Caché dual Redis** (fresh 60s + stale 1h) para servir stock/precios rápidamente sin golpear el ERP; degradación controlada si ERP cae
-4. **Event-driven con Kafka** para propagar cambios (stock actualizado, orden confirmada, pago aprobado/rechazado, despacho, entrega) de forma asíncrona
-5. **OAuth2/OIDC con Keycloak** + autorización por scopes/roles por partner/canal + rate limiting perimetral en Kong
-6. **Observabilidad nativa**: Prometheus metrics, X-Ray tracing, JSON logs con correlation-id, dashboards Golden Signals, SLOs con error budgets
-7. **Clean Architecture** verificada por ArchUnit: dominio puro, puertos, adaptadores intercambiables, evolución con mínimo impacto
+En lugar de seguir cosiendo sistemas entre sí, se construye una capa intermedia que todos usan. Los canales dejan de hablar con el ERP: hablan con esta capa, que se encarga de resolver todo lo demás.
 
-### Beneficio de negocio
+1. **Una capa de interoperabilidad** que vive en AWS y expone APIs ordenadas hacia afuera. Es el único punto de entrada, así que ahí se controla quién entra y cuánto puede pedir.
+2. **Un adaptador por cada sistema legacy** (ERP, WMS, OMS, CRM), que traduce los datos de cada uno a un formato común y los protege con mecanismos de corte: si el ERP no responde, la capa deja de insistirle en lugar de arrastrar la caída hacia el resto.
+3. **Caché en dos niveles.** El stock y los precios se guardan un minuto en memoria rápida; si el ERP se cae, se sigue sirviendo el último valor conocido durante una hora. Es la diferencia entre mostrar stock un poco desactualizado o mostrar un error al cliente.
+4. **Comunicación asíncrona** para lo que no necesita respuesta inmediata (confirmar un pago, notificar un despacho), de modo que el flujo de compra no se bloquee si un sistema de atrás está lento.
+5. **Un solo esquema de autenticación** para todos los canales, con permisos distintos según quién sea y límites de tráfico por cliente.
+6. **Visibilidad completa** del recorrido de cada request, para poder responder "¿qué pasó?" sin adivinar.
+7. **Código organizado por responsabilidad**, con reglas que la propia herramienta verifica, para que cambiar una pieza no obligue a reescribir las demás.
 
-| Beneficio | Cuantificación |
+### Qué gana el negocio
+
+| Beneficio | Qué significa en la práctica |
 |---|---|
-| **Reducción de incidentes en promos** | De caídas completas (5xx) a degradación controlada (stale-cache, 503 con Retry-After) |
-| **Latencia p95 < 300ms** | Caché fresh < 15ms; ERP protegido (250ms timeout, CB/Bulkhead) |
-| **Disponibilidad 99.9%** | Multi-AZ, PDB, HPA, fail-closed, stale-cache fallback |
-| **Time-to-market nuevos canales** | De semanas a días (contratos estandarizados, adapters plug-and-play) |
-| **Trazabilidad end-to-end** | Correlation-ID en logs, traces, métricas; auditoría PCI-DSS |
-| **Costo optimizado** | Graviton3 (~30% menos), Aurora Serverless v2 (pay-per-use), Spot-ready |
+| **Menos incidentes en promos** | Antes una caída del ERP tumbaba la venta completa. Con esta capa, el canal sigue mostrando stock (aunque sea de hace un rato) y solo se bloquea el dato que de verdad no se puede servir. Se pasa de "todo caído" a "degradado, pero vendiendo". |
+| **Respuesta rápida** | El 95% de las consultas debe resolverse en menos de 300 milisegundos. La mayoría sale de caché y ni siquiera toca el ERP; cuando lo toca, hay un límite de espera estricto para que una lentitud del ERP no se convierta en una lentitud del cliente. |
+| **Disponibilidad del 99.9%** | El sistema está preparado para perder una zona de AWS sin dejar de atender, se escala solo cuando sube la carga y tiene respuesta preparada para cada tipo de fallo. |
+| **Integrar canales nuevos deja de ser un proyecto** | Un canal nuevo se conecta a contratos que ya existen, en días en vez de semanas. Antes cada integración se diseñaba desde cero. |
+| **Poder auditar y responder** | Cada operación queda registrada con un identificador que permite reconstruir el recorrido completo. Necesario para auditoría y para resolver reclamos. |
+| **Costo bajo control** | Se usa hardware con mejor relación precio/rendimiento y servicios que cobran por uso real, no por capacidad reservada. |
 
 ---
 
 ## 2. Preguntas, Supuestos y Riesgos
 
-### Preguntas al cliente
+### Lo que necesitamos preguntarle al cliente
 
-| # | Pregunta | Por qué la hacemos |
+Estas preguntas existen porque las respuestas cambian decisiones concretas del diseño. No son formalidades: cada una mueve algo.
+
+| # | Pregunta | Qué decisión cambia según la respuesta |
 |---|---|---|
-| 1 | ¿El ERP SAP expone OData/REST con SLA de latencia? ¿Cuál es el timeout máximo aceptable? | Define presupuesto de timeout (250ms) y estrategia de cache |
-| 2 | ¿El WMS tiene API REST o solo SOAP/EDI? ¿Soporta reservas atómicas? | Define patrón de integración (ACL, compensación) |
-| 3 | ¿La pasarela de pagos soporta webhooks salientes? ¿Cuál es el SLA de confirmación? | Define async vs sync, DLQ, retry policy |
-| 4 | ¿Qué sistemas son source of truth para stock? (ERP contable vs WMS físico) | Define consistencia eventual, reconciliación |
-| 5 | ¿Hay sistemas multi-tenant por marca/región? ¿Cómo se identifica el tenant? | Define multi-tenant básico (scopes, namespaces) |
-| 6 | ¿Qué SLA de disponibilidad tiene cada legacy? (ERP, WMS, OMS) | Define circuit breaker thresholds, fallbacks |
-| 7 | ¿Existen sistemas de mensajería existentes (Kafka, RabbitMQ, SQS)? | Define si se adopta Kafka o se usa SQS |
-| 8 | ¿Qué volumen de órdenes se espera en picos? (req/s, concurrent users) | Define HPA, rate limiting, capacity planning |
-| 9 | ¿Hay regulaciones específicas (PCI-DSS, GDPR, locales)? | Define CDE isolation, PII handling, auditoría |
-| 10 | ¿Qué sistemas serán los próximos a integrar? (WMS, OMS, CRM roadmap) | Define patrón de extensibilidad |
+| 1 | ¿El ERP SAP expone una API moderna (OData/REST) y cuánto puede tardar en responder? | Si responde rápido, se puede esperar su respuesta en vivo. Si no, hay que apoyarse más en caché. De aquí sale el límite de 250ms que usamos. |
+| 2 | ¿El WMS permite reservar stock por API o solo recibe archivos por lotes? | Con API se puede reservar en el momento; solo por lotes obliga a un flujo de conciliación distinto. |
+| 3 | ¿La pasarela de pagos avisa por webhook cuando un pago se aprueba? | Si avisa, se libera al cliente de esperar. Si no, hay que consultar el estado periódicamente. |
+| 4 | ¿Quién es la fuente de verdad del stock: el ERP (contable) o el WMS (físico)? | Define cuál dato mostramos y cómo se reconcilian cuando no coinciden. |
+| 5 | ¿Hay marcas o regiones con datos separados? ¿Cómo se identifica cada una? | Si existen, el diseño necesita separar permisos y datos desde el primer día. |
+| 6 | ¿Qué disponibilidad garantiza cada sistema legacy? | Define cuándo dejar de insistir (cortar) y por cuánto tiempo. |
+| 7 | ¿Ya existe una plataforma de mensajería en la empresa? | Si hay una, se usa esa en lugar de instalar otra. |
+| 8 | ¿Qué volumen se espera en un pico? | Dimensiona el escalado automático y los límites de tráfico. |
+| 9 | ¿Hay exigencias regulatorias aplicables (PCI-DSS, protección de datos)? | Define cuánto aislamiento y cuánto cuidado con datos personales. |
+| 10 | ¿Qué sistemas siguen en la lista para integrar? | Define cuán fácil debe ser enchufar un sistema nuevo. |
 
-### Supuestos
+### Supuestos de trabajo
 
-| # | Supuesto | Justificación |
+Todo diseño se para sobre algo. Estos son los supuestos que asumimos, y qué pasa si alguno no se cumple.
+
+| # | Supuesto | Qué sostenemos con él |
 |---|---|---|
-| 1 | SAP ERP expone API OData/REST para stock y precios con latencia < 500ms | Necesario para timeout 250ms + CB |
-| 2 | WMS soporta reserva de stock vía API (no solo EDI batch) | Flujos síncronos de creación de orden |
-| 3 | Pasarela de pagos envía webhooks con retry automático | Evita polling, permite async |
-| 4 | ERP es source of truth para stock contable; WMS para stock físico | Reconciliación eventual vía eventos |
-| 5 | Volumen pico: ~1000 RPS stock/precios, ~100 órdenes/min | Dimensionamiento HPA, rate limiting, CB |
-| 6 | Multi-tenant por canal (ecommerce, marketplace, operador) con scopes distintos | Keycloak clients + scopes por canal |
-| 7 | AWS como cloud provider (EKS, ElastiCache, Aurora, KMS) | Infra objetivo sugerida en la prueba |
-| 8 | Equipo tiene experiencia en Spring Boot/Kotlin y AWS | Curva de aprendizaje aceptable |
-| 9 | Kafka disponible o se puede aprovisionar en EKS | Event-driven para webhooks/órdenes |
-| 10 | PCI-DSS Level 1 no aplica (Level 2/3 o SAQ) | CDE isolation suficiente, no tokenización completa |
+| 1 | El ERP puede responder stock y precios en menos de 500ms | Es lo que permite fijar un límite de espera de 250ms y confiar en la caché para el resto. |
+| 2 | El WMS permite reservar stock por API | Habilita vender y reservar en el mismo instante. |
+| 3 | La pasarela de pagos reintenta sus avisos sola | Nos permite no estar preguntándole el estado todo el tiempo. |
+| 4 | El ERP manda en el stock contable y el WMS en el físico | Explica por qué aceptamos pequeñas diferencias temporales entre ambos. |
+| 5 | Pico de ~1000 consultas por segundo y ~100 órdenes por minuto | Es la base del dimensionamiento; si el pico real es mucho mayor, hay que recalcular. |
+| 6 | Los canales se separan por tipo (e-commerce, marketplace, operador) con permisos distintos | Define el modelo de permisos inicial. |
+| 7 | AWS es el proveedor de nube | Es lo que la prueba sugiere como objetivo. |
+| 8 | El equipo ya trabaja con Spring Boot/Kotlin y con AWS | Evita suponer una curva de aprendizaje grande. |
+| 9 | Se puede disponer de Kafka | Habilita el flujo asíncrono para pagos y notificaciones. |
+| 10 | La exigencia PCI-DSS es de nivel 2/3, no de nivel 1 | Con esto basta aislar el entorno de datos sensibles; si fuese nivel 1 habría que añadir tokenización. |
 
-### Riesgos
+### Riesgos y cómo los cubrimos
 
-| # | Riesgo | Impacto | Mitigación |
+| # | Riesgo | Impacto | Cómo lo mitigamos |
 |---|---|---|---|
-| 1 | SAP ERP no soporta latencia 250ms → CB abre constantemente | Alto | Cache stale (1h), fail-closed 503, monitoring de SAP latency |
-| 2 | WMS no soporta reservas atómicas → race conditions en stock | Alto | Idempotency key + compensación saga, retry con backoff |
-| 3 | Keycloak HA no configurado → auth single point of failure | Alto | 2 réplicas, PostgreSQL Aurora Multi-AZ, health checks |
-| 4 | Costos AWS exceden presupuesto (EKS + Aurora + ElastiCache) | Medio | Graviton3, Serverless v2, Spot instances, Savings Plans |
-| 5 | Equipo sin experiencia en Kafka/Kong/Keycloak | Medio | Documentación exhaustiva, runbooks, training |
-| 6 | PII leakage en logs (PCI-DSS) | Alto | Log sanitization, correlation-id, audit logs, SAST |
-| 7 | Drift de configuración (K8s, CDK, Helm) | Medio | Drift detection semanal, GitOps futuro |
-| 8 | Rate limiting mal configurado → bloqueo de tráfico legítimo | Medio | Por consumer/channel, no global; monitoreo de 429 |
+| 1 | El ERP responde más lento de lo esperado y el sistema deja de insistirle constantemente | Alto | Se sirve el último valor conocido durante una hora, se avisa de la degradación en vez de fallar de golpe, y se mide la lentitud del ERP para tener evidencia. |
+| 2 | El WMS no soporta reservas atómicas y dos ventas toman el mismo stock | Alto | Cada operación lleva una clave única que evita duplicados, y si algo falla a mitad del proceso se revierte lo hecho. |
+| 3 | El servicio de autenticación queda como único punto de falla | Alto | Corre con dos instancias y su base de datos es redundante entre zonas. |
+| 4 | El costo de AWS supera lo presupuestado | Medio | Se usan instancias más eficientes, servicios que cobran por uso y capacidad comprada a largo plazo. |
+| 5 | El equipo no conoce alguna de las tecnologías elegidas | Medio | Se documentan los procedimientos y se acompaña con capacitación; para eso existen los runbooks. |
+| 6 | Se filtran datos personales en los logs | Alto | Los logs guardan identificadores, no datos personales, y hay controles automáticos que revisan que así sea. |
+| 7 | La configuración se desvía entre lo declarado y lo que está desplegado | Medio | Se compara periódicamente lo declarado con lo real y se detecta la diferencia a tiempo. |
+| 8 | El límite de tráfico bloquea clientes legítimos | Medio | Los límites son por cliente, no globales, y se vigila cuántos rechazos hay. |
+
 
 ---
 
 ## 3. Arquitectura de Alto Nivel
 
-### 3.1 Diagrama de Contexto (C4 Level 1)
+### 3.1 Cómo se ve el sistema desde afuera
+
+Este primer diagrama muestra quién usa el sistema y con quién tiene que hablar. A la izquierda están los canales de venta; en el centro, la capa que construimos; a la derecha, los sistemas que ya existen en la empresa.
 
 ```mermaid
 flowchart TB
@@ -135,97 +140,113 @@ flowchart TB
     style MQ fill:#f3e5f5,stroke:#7b1fa2
 ```
 
-### 3.2 Componentes Principales
+Lo importante de este dibujo es que **ningún canal habla directamente con el ERP**. Todo pasa por la capa intermedia, que es donde se decide qué se responde, de dónde se saca el dato y qué se hace si el sistema de atrás no contesta.
 
-| Componente | Responsabilidad | Tecnología | Escalabilidad |
+### 3.2 Las piezas y qué hace cada una
+
+| Pieza | Para qué está | Con qué se construyó | Cómo crece |
 |---|---|---|---|
-| **Kong (API Gateway)** | Rate limiting, JWT validation, routing, CORS, TLS termination, request/response transformation | Kong Ingress Controller (Helm) | Horizontal (HPA), Redis backend |
-| **Integration Layer** | Orquestación de flujos, ACL hacia legados, normalización, validación | Kotlin + Spring Boot 3.2 (Clean Architecture) | Horizontal (HPA 2-10) |
-| **Redis (ElastiCache)** | Caché fresh/stale (stock, precios), session store, rate limit counters | Redis 7.1 Multi-AZ, TLS, KMS | Vertical (t4g.medium → large) + Cluster Mode |
-| **Kafka (Event Bus)** | Propagación de eventos (stock.updated, order.confirmed, payment.approved/rejected, shipment.started, delivery.confirmed) | Kafka en EKS (Strimzi) o MSK | Partitions por topic, consumer groups |
-| **Keycloak (OIDC)** | Autenticación, autorización, multi-tenant, token issuance | Keycloak 24 (Helm, Aurora backend) | 2 réplicas HA |
-| **EKS Cluster** | Plataforma de cómputo, scheduling, scaling | EKS 1.29, NodeGroup Graviton3 (c7g.medium) | HPA + Cluster Autoscaler |
-| **Aurora PostgreSQL** | BD Keycloak, audit logs, order metadata | Aurora Serverless v2 PG 16 | Auto-scaling 0.5-128 ACU |
+| **Kong (puerta de entrada)** | Es lo primero que toca cada petición. Ahí se revisa quién es el cliente, si tiene permiso y si no está pidiendo más de lo que le corresponde. También reparte el tráfico hacia adentro. | Kong sobre Kubernetes | Se agregan instancias cuando sube la carga |
+| **Capa de integración** | Es el cerebro. Recibe la petición ya validada, decide de dónde obtener el dato, traduce lo que devuelven los sistemas antiguos y arma la respuesta. | Kotlin + Spring Boot | Entre 2 y 10 instancias según demanda |
+| **Redis** | Guarda en memoria los datos que se consultan todo el tiempo (stock y precios), de modo que la mayoría de las consultas no llegue nunca al ERP. | Redis con redundancia entre zonas | Se agranda la instancia o se reparte en clúster |
+| **Kafka (bus de eventos)** | Para lo que no necesita respuesta inmediata: avisar que el stock cambió, que una orden se confirmó, que un pago se aprobó. En vez de que un sistema llame al otro, publica un aviso y quien lo necesite lo toma. | Kafka sobre Kubernetes | Se agregan particiones y consumidores |
+| **Keycloak** | Único responsable de decir quién es quién. Entrega credenciales y define qué puede hacer cada canal. | Keycloak 24 con base de datos dedicada | Dos instancias activas |
+| **Clúster de cómputo** | Es la plataforma donde corre todo lo anterior. Reparte el trabajo entre servidores y agrega capacidad cuando hace falta. | Kubernetes sobre hardware ARM | Escala solo según uso |
+| **Base de datos Aurora** | Guarda usuarios, credenciales y metadatos de órdenes. No es la base del negocio: no almacena el stock. | PostgreSQL gestionado con escalado automático | Sube y baja según lo que se use |
 
-### 3.3 Decisiones Clave + Trade-offs
+### 3.3 Decisiones clave y qué costo tienen
 
-#### Sync vs Async
+#### Cuándo respondemos en el momento y cuándo en segundo plano
 
-| Flujo | Patrón | Justificación |
+Esta es la decisión que más cambia el comportamiento del sistema. La regla es simple: si el cliente está esperando en pantalla, respondemos en el momento; si puede enterarse después, lo hacemos en segundo plano.
+
+| Situación | Cómo se resuelve | Por qué |
 |---|---|---|
-| **Consulta stock/precio** | **Sync** (REST) | El canal necesita respuesta inmediata para mostrar UI. Cache fresh (60s) evita ERP. Timeout estricto 250ms + CB protege. |
-| **Crear orden** | **Sync para validación** + **Async para confirmación** | Validar token, catálogo, precio, reservar stock (sync, 2s max). Pago y confirmación async (webhook). |
-| **Consultar estado orden** | **Sync** (REST) | Consulta idempotente, cache en Redis (TTL 30s). |
-| **Webhooks/Eventos** | **Async** (Kafka + webhooks) | No bloquear flujo principal. At-least-once delivery con idempotencia. DLQ para fallos. |
-| **Notificaciones (email/SMS)** | **Async** (Kafka consumers) | No bloquear respuesta. Retry con backoff. |
+| **Consultar stock o precio** | En el momento | El usuario está mirando la pantalla. No existe "te aviso luego" cuando alguien espera ver si hay producto. Se resuelve desde caché casi siempre, y contra el ERP solo cuando el dato está vencido. |
+| **Crear una orden** | Mixto: validamos en el momento, confirmamos después | El cliente necesita saber ya si su compra quedó registrada y si había stock. Pero el cobro y la confirmación pueden tomarse su tiempo sin que el usuario espere en pantalla. |
+| **Consultar estado de una orden** | En el momento, con caché corta | Es una consulta que no cambia nada, así que se puede responder rápido y repetir sin efectos secundarios. |
+| **Avisos entre sistemas y webhooks** | En segundo plano | Son avisos: no hay nadie esperando la respuesta. Si un sistema está caído, el aviso se reintenta y no se pierde. |
+| **Correos y mensajes al cliente** | En segundo plano | Nadie está mirando esa pantalla. Que un correo salga dos minutos más tarde no afecta la venta. |
 
-**Regla general**: Sync cuando el cliente necesita respuesta inmediata para tomar decisión. Async cuando el procesamiento puede ocurrir en segundo plano sin impactar UX.
+#### Qué hace la puerta de entrada y qué no
 
-#### Rol del API Gateway (Kong)
+Hay una discusión típica en estos sistemas: cuánto trabajo concentrar en el gateway. La regla que seguimos es no poner reglas de negocio ahí.
 
-| Responsabilidad | En Gateway | En Servicios | Justificación |
-|---|---|---|---|
-| **Autenticación (JWT validation)** | ✅ Sí (JWT Plugin) | ❌ No (solo valida claims) | Centraliza auth, reduce código repetido |
-| **Autorización (scopes/roles)** | ⚠️ Parcial (JWT plugin valida scope presente) | ✅ Sí (`@PreAuthorize`) | Lógica de negocio en servicio, gateway solo filtra |
-| **Rate Limiting** | ✅ Sí (Kong Plugin, Redis backend) | ❌ No | Perímetro, protege todos los servicios |
-| **Routing** | ✅ Sí (Ingress rules) | ❌ No | Centraliza routing, blue-green, canary |
-| **TLS Termination** | ✅ Sí (ACM cert) | ❌ No | Reduce carga en pods |
-| **Request/Response Transformation** | ⚠️ Solo si necesario | ✅ Principalmente en servicios | Evitar lógica compleja en gateway |
-| **Logging/Auditoría** | ✅ Access logs | ✅ App logs con correlation-id | Complementario |
+| Tarea | Dónde se hace | Por qué |
+|---|---|---|
+| **Verificar la credencial** | En la puerta de entrada | Se hace una sola vez para todas las peticiones y evita repetir el mismo código en cada servicio. |
+| **Verificar permisos** | Mayormente en el servicio | El gateway descarta credenciales inválidas, pero decidir si un canal puede ver un dato concreto requiere conocer el dominio. |
+| **Limitar el tráfico** | En la puerta de entrada | Es mejor frenar antes de que la petición consuma recursos. Protege a todos los servicios por igual. |
+| **Repartir tráfico** | En la puerta de entrada | Permite cambiar versiones sin que los servicios se enteren. |
+| **Terminar el cifrado** | En la puerta de entrada | Descifrar en un solo punto ahorra trabajo a las instancias internas. |
+| **Transformar datos** | En los servicios, salvo excepciones | Meter lógica de negocio en el gateway lo vuelve un lugar difícil de mantener y de probar. |
+| **Registrar para auditoría** | En ambos | El gateway deja constancia de lo que llegó y los servicios de lo que se hizo con eso. |
 
-#### Dónde se transforma/valida
+#### Dónde se valida y se transforma cada cosa
 
-| Capa | Qué se valida/transforma |
+| Capa | Qué revisa o adapta |
 |---|---|
-| **Kong (Gateway)** | JWT signature, expiry, scope presence, rate limit, TLS, CORS |
-| **Integration Layer (App)** | Payload validation (Jakarta Validation), business rules, ACL normalization, idempotency |
-| **Adapters (ACL)** | Normalización de datos legacy (negativos → 0, formatos fecha, encoding), retry logic |
-| **Dominio** | Invariantes (stock ≥ 0, reserved ≤ available, SKU válido) |
+| **Puerta de entrada** | Que la credencial sea válida y no esté vencida, que tenga el permiso básico, que el cliente no exceda su límite y que la conexión esté cifrada. |
+| **Capa de integración** | Que el contenido de la petición tenga lo necesario y con el formato correcto, que se cumplan las reglas del negocio, y que la operación no se repita si es un reintento. |
+| **Adaptadores** | Traducir lo que devuelven los sistemas antiguos: valores imposibles, formatos de fecha distintos, codificaciones raras. |
+| **Dominio** | Las reglas que no se negocian: el stock no puede ser negativo, lo reservado no puede superar lo disponible. |
 
-#### Versionado de APIs
+#### Cómo versionamos las APIs
 
-| Estrategia | Implementación |
+Un canal no puede despertar un día y descubrir que el campo que usaba ya no existe.
+
+| Estrategia | Cómo se aplica |
 |---|---|
-| **URI Versioning** | `/v1/inventory/stock/{sku}`, `/v2/inventory/stock/{sku}` |
-| **Backward Compatible** | Agregar campos opcionales, nunca remover/renombrar |
-| **Deprecation** | Header `Deprecation: true`, `Sunset: <date>` |
-| **Breaking Changes** | Nueva versión mayor (`/v2/`), mantener v1 mínimo 6 meses |
-| **Contract First** | OpenAPI 3.0 generado desde código (SpringDoc), validado en CI |
+| **Versionado en la URL** | La versión va en la dirección (`/v1/...`), así conviven dos versiones sin pisarse. |
+| **Cambios compatibles** | Se agregan campos, nunca se quitan ni se renombran los que ya existen. |
+| **Aviso de desuso** | Antes de retirar algo se avisa en la respuesta con la fecha en que dejará de funcionar. |
+| **Cambios que rompen** | Obligan a una versión nueva, y la anterior sigue viva al menos seis meses. |
+| **Contrato primero** | La documentación de la API se genera del código y se valida automáticamente; no puede quedar desactualizada. |
 
-### 3.4 Infraestructura Propuesta en AWS
+### 3.4 Infraestructura propuesta en AWS
 
-Topología propuesta sobre `us-east-1`, con las dos zonas de disponibilidad que
-sostienen el despliegue y el aislamiento por tipo de subred. Cada bloque tiene su
-contraparte en código del repo: `infra/network_stack.py`, `infra/security_stack.py`,
-`infra/data_stack.py` y `infra/compute_stack.py`, además de los manifiestos de
-`deploy/k8s/` y `deploy/kong/`. La fuente editable está en
+El despliegue se propone sobre la región `us-east-1` con dos zonas de
+disponibilidad, para que la caída de una no detenga el servicio. La idea central
+del diseño es separar por niveles de exposición: lo que recibe tráfico de Internet
+vive en un segmento público; lo que ejecuta la aplicación vive en un segmento
+privado que puede salir hacia afuera pero no ser alcanzado desde afuera; y los
+datos viven en un tercer segmento sin salida a Internet, al que solo se llega
+desde la aplicación. Si alguien compromete una instancia de la capa de aplicación,
+no tiene camino directo hacia las bases de datos.
+
+Cada bloque del diagrama tiene su contraparte en archivos del repositorio
+(`infra/network_stack.py`, `infra/security_stack.py`, `infra/data_stack.py`,
+`infra/compute_stack.py`), y la fuente editable está en
 `docs/diagrams/infraestructura-aws.drawio`.
 
 ![Infraestructura propuesta en AWS](docs/diagrams/infraestructura-aws.jpg)
 
-| Capa | Dónde está en el repo | Estado |
+| Qué existe | Dónde está definido | Estado |
 |---|---|---|
-| VPC con subredes públicas, privadas y aisladas por AZ, NAT y Flow Logs | `infra/network_stack.py` | ✅ CDK |
-| KMS con rotación anual + Secrets Manager | `infra/security_stack.py` | ✅ CDK |
-| Redis 7.1 Multi-AZ con TLS y Aurora PostgreSQL 16 Serverless v2, ambos en subredes aisladas | `infra/data_stack.py` | ✅ CDK |
-| EKS 1.29, nodegroup Graviton3, Kong, Keycloak, External Secrets, metrics-server | `infra/compute_stack.py` | ✅ CDK |
-| ECR, Security Hub, GuardDuty e Inspector | `infra/` | ⚠️ propuestos en el diseño, pendientes de stack propio |
-| Deployment, Service, HPA, PDB, NetworkPolicy, ServiceMonitor | `deploy/k8s/` | ✅ manifiestos |
-| Consumidores Kong y plugin de rate limit por canal | `deploy/kong/` | ✅ manifiestos |
-| Prometheus + Grafana, X-Ray, CloudWatch Logs | sección 7 | ⚠️ diseñado, pendiente de desplegar |
-| Publicación automática de la imagen ARM64 a ECR | `.github/workflows/ci.yml` | ⚠️ el build ya corre en CI, falta el push |
+| Red aislada por niveles, con segmentos público, privado e interno en cada zona, salida controlada a Internet y registro de todo el tráfico de red | `infra/network_stack.py` | Definido en código |
+| Cifrado de datos con clave rotada cada año y almacén central de credenciales | `infra/security_stack.py` | Definido en código |
+| Caché en memoria con redundancia entre zonas y cifrado, y base de datos con escalado automático, ambos en el segmento interno | `infra/data_stack.py` | Definido en código |
+| Clúster de contenedores con procesadores ARM, más la puerta de entrada, el sistema de identidad y la inyección de credenciales | `infra/compute_stack.py` | Definido en código |
+| Registro de imágenes del servicio y servicios de análisis de seguridad de AWS | `infra/` | Propuestos en el diseño, pendientes de su propio módulo |
+| Configuración con la que se ejecuta el servicio: instancias, escalado, aislamiento y monitoreo | `deploy/k8s/` | Archivos listos |
+| Configuración de la puerta de entrada con un límite de tráfico distinto por canal | `deploy/kong/` | Archivos listos |
+| Recolección de métricas, trazabilidad de peticiones y registros centralizados | sección 7 | Diseñado, pendiente de desplegar |
+| Publicación automática de la imagen del servicio al registro de AWS | `.github/workflows/ci.yml` | La construcción ya corre en integración continua, falta la publicación |
 
-El medio de conectividad hacia el SAP on-prem (VPN Site-to-Site, Direct Connect
-u OData expuesto sobre Internet) se confirma con el cliente; hasta entonces el
-diagrama muestra solo el egress de las subredes privadas. El bus de eventos entra
-en el mes 3 del roadmap y la capa completa de observabilidad (Grafana, X-Ray,
-CloudWatch) en el mes 5.
+Queda por confirmar con el cliente cómo se conectará con el SAP que corre en las
+instalaciones de la empresa: puede ser un enlace dedicado, una conexión cifrada por
+Internet o exponer el SAP a través de Internet. Hasta que eso se defina, el
+diagrama solo muestra la salida normal de los segmentos privados. El bus de eventos
+entre sistemas llega en el tercer mes del plan y la capa completa de monitoreo en
+el quinto.
 
 ---
 
 ## 4. Diseño de la Capa de Interoperabilidad
 
-### 4.1 Dominios / Bounded Contexts
+### 4.1 Cómo se organiza por dominio
+
+La capa no es un bloque monolítico. Está cortada por tema de negocio, de modo que un equipo pueda trabajar en stock sin pisar al que trabaja en órdenes. Cada bloque tiene su propio adaptador hacia el sistema legacy correspondiente.
 
 ```mermaid
 flowchart TB
@@ -264,18 +285,25 @@ flowchart TB
     style NOTIF_SVC fill:#e0f2f1,stroke:#00695c
 ```
 
-### 4.2 Servicios Principales y Responsabilidades
+Este corte por dominio es lo que permite entregar por partes: el primer incremento
+solo necesita Stock, y los demás se agregan sin tocar lo que ya funciona.
 
-| Servicio | Responsabilidad | Legacy | Patrón de Integración |
+### 4.2 Los servicios y de qué se encarga cada uno
+
+| Servicio | Qué resuelve | Con qué sistema habla | Cómo lo hace |
 |---|---|---|---|
-| **Stock Service** | Consultar stock por SKU/bodega/canal. Degradación controlada. | ERP SAP (OData API_STOCK) | ACL + Circuit Breaker + Bulkhead + Cache dual |
-| **Pricing Service** | Consultar precio por SKU/canal/cliente (descuentos, promos) | ERP SAP (OData API_PRICING) | ACL + Cache (5 min TTL) + Rules Engine |
-| **Order Service** | Crear orden, consultar estado, orquestar saga (stock → pago → confirmación) | OMS (REST), WMS (Reserva) | Saga Pattern + Idempotency + Compensación |
-| **Customer Service** | Consultar cliente, fidelización, PII handling | CRM (REST/SOAP) | ACL + PII masking + Cache |
-| **Payment Service** | Iniciar pago, manejar webhooks pago aprobado/rechazado | Pasarela (REST + Webhooks) | Async webhook handler + DLQ + Retry |
-| **Notification Service** | Notificar orden confirmada, pago, despacho, entrega | Kafka consumers + Email/SMS | Event-driven, templates, retry |
+| **Stock** | Responder cuánto stock hay de un producto en una bodega, incluso cuando el ERP no responde. | ERP SAP | Consulta al ERP cuando el dato está vencido, guarda el resultado y, si el ERP falla, sigue sirviendo el último valor conocido. Además corta las llamadas si detecta que el ERP está fallando, para no empeorar la situación. |
+| **Precios** | Devolver el precio correcto según el canal y el cliente, aplicando promociones. | ERP SAP | Igual que stock, pero con datos que cambian poco, así que se guardan por más tiempo. Las reglas de descuento viven acá, no en el ERP. |
+| **Órdenes** | Registrar una compra y seguir su estado hasta el final. | OMS y WMS | Coordina los pasos (reservar stock, cobrar, confirmar) y, si un paso falla, deshace lo anterior. Cada orden lleva un identificador único para que reintentar no genere duplicados. |
+| **Clientes** | Devolver datos del cliente y su fidelización, cuidando los datos personales. | CRM | Traduce el formato del CRM y enmascara los datos sensibles antes de que salgan del sistema. |
+| **Pagos** | Iniciar el cobro y recibir el resultado. | Pasarela de pagos | No espera al cliente: inicia el cobro y responde. Cuando la pasarela avisa el resultado, continúa el flujo. Si el aviso falla, se reintenta y queda registro del problema. |
+| **Notificaciones** | Avisar al cliente por correo o mensaje. | Sistemas internos | Escucha lo que pasa en el sistema y dispara los avisos. Es lo menos crítico: si falla, no se cae la venta, pero queda registrado. |
 
-### 4.3 Patrón de Integración (ACL hacia ERP/WMS/OMS/CRM)
+### 4.3 Cómo hablamos con los sistemas antiguos
+
+Cada sistema legacy tiene sus propias rarezas. En vez de esparcir ese
+conocimiento por todo el código, se concentra en un adaptador por sistema. El
+resto de la aplicación solo conoce el formato limpio.
 
 ```mermaid
 flowchart LR
@@ -299,20 +327,25 @@ flowchart LR
 
     style PORT fill:#f3e5f5,stroke:#7b1fa2
     style USECASE fill:#e3f2fd,stroke:#1565c0
-    style ADAPTER fill:#fff3e0,stroke:#ef6c00
+    style ADAPTER fill:#fff7e0,stroke:#ef6c00
     style MAPPER fill:#fce4ec,stroke:#c2185b
 ```
 
-**Reglas del ACL**:
-1. **Normalización**: Negativos → 0, fechas ISO-8601, encoding UTF-8
-2. **Validación**: Invariantes de dominio (stock ≥ 0, reserved ≤ available)
-3. **Transformación**: Campos legacy → campos de dominio (ej. `Material` → `sku`)
-4. **Resiliencia**: Circuit Breaker, Bulkhead, Retry con backoff exponencial
-5. **Observabilidad**: Correlation-ID propagado, métricas por adapter
+Las reglas que sigue todo adaptador:
 
-### 4.4 Contratos (2 endpoints con ejemplo)
+1. **Corregir lo que llega mal.** Un stock negativo no es un stock negativo: es un dato sucio. Se normaliza a cero en lugar de propagar el error a la pantalla del cliente.
+2. **Verificar antes de confiar.** Se comprueba que el dato cumpla las reglas del negocio antes de darlo por bueno.
+3. **Traducir nombres.** El ERP habla de `Material`; nosotros hablamos de `sku`. Esa traducción vive solo acá.
+4. **Protegerse.** Si el sistema legacy se cae o se pone lento, se corta la llamada y se activa el plan de contingencia, en lugar de dejar que la lentitud se propague.
+5. **Dejar rastro.** Cada llamada queda identificada para poder reconstruir qué pasó cuando haya que investigar.
 
-#### Endpoint 1: Consultar Stock
+### 4.4 Los contratos que ven los canales
+
+Los canales no ven nada de lo anterior. Solo ven dos endpoints bien definidos. Estos son los ejemplos reales, tal como quedaron implementados y probados en el primer incremento.
+
+#### Consultar stock
+
+El canal pregunta por un producto en una bodega y recibe la cantidad disponible. En la respuesta se indica de dónde salió el dato, lo cual es útil para diagnóstico: si dice `cache`, salió de memoria; si dice `stale-cache`, el ERP estaba caído y se sirvió el último valor conocido.
 
 ```http
 GET /v1/inventory/stock/{sku}?warehouseId=W01
@@ -334,15 +367,26 @@ X-Correlation-ID: <uuid-v4>
 }
 ```
 
-**Códigos de error**:
-| Código | Tipo | Descripción |
-|---|---|---|
-| 400 | `urn:andes:error:bad-request` | SKU inválido, warehouse no encontrado |
-| 401 | `urn:andes:error:unauthorized` | Sin JWT o JWT inválido |
-| 403 | `urn:andes:error:forbidden` | Sin scope `inventory:read` |
-| 503 | `urn:andes:error:stock-unavailable` | ERP caído y sin stale cache; incluye `Retry-After: 5` |
+**Qué puede salir mal y qué se responde:**
 
-#### Endpoint 2: Crear Orden (con Idempotencia)
+| Código | Cuándo ocurre | Qué recibe el canal |
+|---|---|---|
+| 400 | El producto o la bodega no son válidos | Se le dice exactamente qué dato estaba mal |
+| 401 | No mandó credencial o la credencial no sirve | Se le indica que debe autenticarse de nuevo |
+| 403 | Está autenticado pero no tiene permiso para ver stock | Se le indica que le falta el permiso, sin revelar el dato |
+| 503 | El ERP está caído y no hay dato previo guardado | Se le indica que el servicio no está disponible y en cuántos segundos conviene reintentar |
+
+El caso 503 es el único donde de verdad se le niega el dato, y ocurre solo cuando
+no hay absolutamente nada guardado. En cualquier otro escenario se responde con
+lo último conocido.
+
+#### Crear una orden
+
+Este endpoint es más delicado porque genera dinero. El problema clásico es el
+reintento: el cliente envía la orden, la conexión se corta antes de recibir la
+respuesta, y reenvía. Sin protección, eso significa dos órdenes. Por eso se
+exige una clave de idempotencia: si llega dos veces la misma clave, se devuelve
+la orden que ya existía en lugar de crear otra.
 
 ```http
 POST /v1/orders
@@ -382,7 +426,9 @@ X-Correlation-ID: <uuid-v4>
 }
 ```
 
-**Modelo de errores consistente** (RFC 7807):
+**Todos los errores se responden con el mismo formato**, para que el canal no
+tenga que interpretar estructuras distintas según el caso:
+
 ```json
 {
   "type": "urn:andes:error:stock-unavailable",
@@ -396,22 +442,31 @@ X-Correlation-ID: <uuid-v4>
 }
 ```
 
-### Idempotencia en Create Order
+### Cómo funciona la protección contra duplicados
 
-```
-1. Cliente envía POST /v1/orders con header Idempotency-Key: <uuid>
-2. Integration Layer verifica si existe orden con ese key en Redis (TTL 24h)
-3. Si existe → retorna la orden existente (200 OK, no duplica)
-4. Si no existe → crea orden, guarda en Redis (key → orderId), publica evento
-5. Si falla a mitad (pago rechazado) → compensación (liberar stock), marca orden CANCELLED
-6. Si reintenta con mismo key → retorna orden cancelada (no re-intenta pago)
-```
+Vale la pena detallarlo porque es el punto donde más se equivoca la gente al
+integrar sistemas de pago.
+
+1. El canal envía la orden con una clave única en el encabezado.
+2. El sistema revisa si ya procesó esa clave. Se guarda por 24 horas.
+3. Si ya existe, devuelve la orden original sin crear nada nuevo. El canal recibe la misma respuesta que la primera vez.
+4. Si no existe, la procesa y guarda la relación entre la clave y la orden creada.
+5. Si algo falla a mitad del proceso (por ejemplo, el pago es rechazado), se deshace lo que se había hecho y la orden queda marcada como cancelada.
+6. Si el canal reintenta con la misma clave, recibe la orden cancelada. No se vuelve a intentar el cobro.
+
+Esta secuencia es la que convierte un sistema frágil en uno en el que se puede
+confiar cuando hay redes inestables o clientes que reintentan.
 
 ---
 
-## 5. Seguridad (Detallado)
+## 5. Seguridad
 
-### 5.1 OAuth2/OIDC: Flujo esperado
+### 5.1 Cómo se autentica un canal
+
+La primera pregunta de cualquier integración es quién está del otro lado. La
+respuesta acá es un único sistema de identidad (Keycloak) que entrega credenciales,
+y una puerta de entrada (Kong) que las revisa antes de dejar pasar nada. Un canal
+nunca ve la clave del ERP ni tiene forma de saltarse este control.
 
 ```mermaid
 sequenceDiagram
@@ -436,83 +491,113 @@ sequenceDiagram
     GW-->>C: 200 OK + headers
 ```
 
-### 5.2 Validación: Gateway vs Servicios
+En palabras simples: el canal pide su credencial una vez, la usa en cada llamada y
+la puerta de entrada verifica que sea auténtica, que no haya vencido y que traiga
+el permiso necesario. El token dura cinco minutos, de modo que si alguien lo
+intercepta su utilidad es muy corta.
 
-| Validación | Gateway (Kong) | Servicio (App) | Justificación |
+### 5.2 Qué se revisa en la puerta y qué se revisa adentro
+
+La regla es dejar en la puerta todo lo que se puede decidir sin conocer el
+negocio, y dejar adentro lo que depende del dominio.
+
+| Qué se revisa | Puerta de entrada (Kong) | Servicio | Por qué se decidió así |
 |---|---|---|---|
-| **JWT Signature** | ✅ Sí | ❌ No (confía en gateway) | Centraliza crypto |
-| **JWT Expiry** | ✅ Sí | ❌ No | Gateway filtra tokens expirados |
-| **Scope Presence** | ✅ Sí (plugin JWT) | ✅ Sí (`@PreAuthorize`) | Defense in depth |
-| **Rate Limiting** | ✅ Sí (Redis backend) | ❌ No | Perímetro, protege todos |
-| **Payload Schema** | ❌ No | ✅ Sí (Jakarta Validation) | Lógica de negocio en servicio |
-| **Business Rules** | ❌ No | ✅ Sí (domain layer) | Solo servicio conoce dominio |
-| **ACL Normalization** | ❌ No | ✅ Sí (mappers) | Solo servicio conoce legacy |
-| **Idempotency Check** | ❌ No | ✅ Sí (Redis + DB) | Lógica de negocio |
+| **Firma del token** | Sí | No, confía en la puerta | Verificar una firma es caro; se hace una vez para todas las peticiones. |
+| **Vencimiento del token** | Sí | No | La puerta ya descarta lo vencido, no tiene sentido repetirlo adentro. |
+| **Presencia del permiso** | Sí | Sí | Se revisa dos veces a propósito: si alguien lograra saltarse la puerta, el servicio igual rechaza. |
+| **Límite de tráfico** | Sí | No | Frenar antes de consumir recursos protege a todos los servicios por igual. |
+| **Formato del contenido** | No | Sí | Requiere conocer qué campos espera cada operación. |
+| **Reglas del negocio** | No | Sí | Solo el servicio sabe, por ejemplo, que el stock no puede ser negativo. |
+| **Traducción de datos legacy** | No | Sí | Solo el adaptador conoce las rarezas del sistema de origen. |
+| **Control de duplicados** | No | Sí | Depende de la operación concreta y de su estado. |
 
-### 5.3 Autorización por Roles/Scopes y por Partner/Canal
+### 5.3 Quién puede hacer qué
 
-| Partner/Canal | Client ID | Scopes | Rate Limit | Uso |
+Cada canal es un cliente distinto con permisos y límites propios. Un marketplace
+no puede crear órdenes, y eso no depende de que se porte bien: no tiene el permiso
+y el sistema lo rechaza.
+
+| Canal | Identificador | Qué puede hacer | Límite de tráfico | Para qué se usa |
 |---|---|---|---|---|
-| E-commerce (web/app) | `canal-ecommerce` | `inventory:read`, `orders:write`, `prices:read` | 100 req/s | Consulta stock/precios, crear órdenes |
-| Marketplace A | `marketplace-a` | `inventory:read`, `prices:read` | 50 req/s | Consulta stock/precios (read-only) |
-| Marketplace B | `marketplace-b` | `inventory:read` | 30 req/s | Solo consulta stock |
-| Operador Interno | `operador-cli` | `inventory:read`, `orders:read`, `metrics:read` | 200 req/s | Operaciones, monitoreo |
-| WMS (sistema) | `wms-service` | `inventory:write`, `orders:read` | 500 req/s | Actualización stock, consulta órdenes |
+| E-commerce (web y app) | `canal-ecommerce` | Consultar stock y precios, crear órdenes | 100 por segundo | Es el canal principal de venta, necesita el paquete completo. |
+| Marketplace A | `marketplace-a` | Consultar stock y precios | 50 por segundo | Solo lectura: publica el catálogo de AndesRetail, no gestiona compras. |
+| Marketplace B | `marketplace-b` | Consultar stock | 30 por segundo | Integración más liviana, solo necesita saber disponibilidad. |
+| Operador interno | `operador-cli` | Consultar stock y órdenes, ver métricas | 200 por segundo | Herramientas internas de operación y monitoreo. |
+| WMS | `wms-service` | Actualizar stock, consultar órdenes | 500 por segundo | Es un sistema, no una persona: necesita volumen alto y permiso de escritura. |
 
-### 5.4 Rotación de Claves / Expiración / Estrategia de Secretos
+### 5.4 Cómo se guardan y rotan las credenciales
 
-| Secreto | Almacén | Rotación | Expiración | Acceso |
+El problema acá es que una credencial guardada mal es una puerta abierta. Por eso
+ninguna vive en el código ni en un archivo de configuración: se guardan en un
+almacén cifrado y se inyectan en tiempo de ejecución.
+
+| Credencial | Dónde vive | Cada cuánto cambia | Vigencia | Cómo llega a la aplicación |
 |---|---|---|---|---|
-| **JWT Signing Keys (Keycloak)** | Keycloak (JWKS) | Automática (Keycloak maneja) | Tokens: 5 min access, 30 min refresh | Keycloak auto |
-| **SAP Credentials** | AWS Secrets Manager | Manual (cada 90 días) | Sin expiración (rotación manual) | External Secrets Operator → K8s Secret |
-| **Keycloak Admin** | AWS Secrets Manager | Manual (cada 90 días) | Sin expiración | External Secrets Operator → K8s Secret |
-| **Prometheus Scrape Token** | AWS Secrets Manager (generado) | Automática (K8s Secret) | Sin expiración | External Secrets Operator → K8s Secret |
-| **Kong JWT Keys** | Keycloak JWKS (RS256) | Automática (Keycloak) | Tokens: 5 min | Kong JWT Plugin (JWKS URI) |
-| **KMS Key (CMK)** | AWS KMS | Anual (automática) | Sin expiración | IAM Roles (IRSA) |
+| Claves de firma de Keycloak | Keycloak | Lo maneja Keycloak | El token dura 5 minutos | El propio Keycloak publica las claves públicas y todos las consultan de ahí. |
+| Credenciales de SAP | AWS Secrets Manager | Cada 90 días | Hasta que se cambie | Un operador las copia al clúster como archivo temporal; nunca quedan escritas en la imagen. |
+| Administrador de Keycloak | AWS Secrets Manager | Cada 90 días | Hasta que se cambie | Mismo mecanismo que las de SAP. |
+| Token de recolección de métricas | AWS Secrets Manager | Automática | Hasta que se cambie | Se genera y se entrega automáticamente al servicio que lo necesita. |
+| Claves de validación de Kong | Keycloak | Lo maneja Keycloak | El token dura 5 minutos | Kong las consulta directamente desde Keycloak. |
+| Clave de cifrado de AWS | AWS KMS | Anual, automática | No vence | Los permisos de uso se otorgan por rol, no compartiendo la clave. |
 
-**Estrategia de secretos**:
-1. **AWS Secrets Manager** como fuente de verdad (centralizado, auditable)
-2. **External Secrets Operator** sincroniza a K8s Secrets (automático, cada 1h)
-3. **K8s Secrets** montados como volumen (read-only, no env vars en claro)
-4. **Rotación**: Manual para SAP/Keycloak (90 días), automática para JWT (Keycloak), anual para KMS
+La lógica detrás de esto es tener un solo lugar donde buscar un secreto, con
+registro de quién lo leyó y cuándo, y que la aplicación nunca tenga que saber de
+dónde salió.
 
-### 5.5 Threat Model (STRIDE — 6 amenazas + mitigaciones)
+### 5.5 Qué puede salir mal y qué lo evita
 
-| # | Amenaza (STRIDE) | Descripción | Mitigación | Componente |
-|---|---|---|---|---|
-| 1 | **Spoofing** | Atacante usa token robado o falso | JWT validation en Kong (JWKS), scope enforcement, token expiry 5 min, refresh token rotation | Kong + Keycloak |
-| 2 | **Tampering** | Modificación de payload en tránsito | TLS 1.3 end-to-end, HSTS, cert pinning (futuro), input validation (Jakarta) | Kong + App |
-| 3 | **Repudiation** | Cliente niega haber hecho request | Correlation-ID en logs, audit trail (CloudTrail), request signing (futuro) | App + CloudTrail |
-| 4 | **Information Disclosure** | PII en logs, datos sensibles en responses | PII masking en logs, no PII en responses, CDE isolation, KMS encryption | App + Infra |
-| 5 | **Denial of Service** | Flood de requests, resource exhaustion | Rate limiting Kong (100 req/s), Bulkhead (20 concurrent), HPA, NetworkPolicy, WAF (futuro) | Kong + K8s |
-| 6 | **Elevation of Privilege** | Token con scope insuficiente accede a recursos protegidos | Scope enforcement `@PreAuthorize`, roles por canal, RBAC K8s, least privilege IAM | App + K8s + AWS IAM |
+Recorrimos el sistema buscando las formas clásicas en que un atacante actúa. Para
+cada una, la defensa concreta.
+
+| Forma de ataque | En qué consiste | Cómo lo detenemos |
+|---|---|---|
+| **Hacerse pasar por otro** | Usar un token robado o inventado | La firma se verifica siempre contra Keycloak, los tokens duran cinco minutos y el permiso se revisa en dos lugares. Un token viejo ya no sirve. |
+| **Alterar lo que viaja** | Modificar el contenido de una petición en el camino | Todo el tráfico va cifrado, y el contenido se valida antes de procesarlo: si llegó cambiado, no coincide con lo esperado. |
+| **Negar haber hecho algo** | El cliente dice que nunca hizo esa petición | Cada operación queda registrada con un identificador único y con la hora exacta, y hay un registro de auditoría que no se puede editar desde la aplicación. |
+| **Ver datos que no le tocan** | Datos personales que aparecen en logs o en respuestas | Los logs guardan identificadores, no datos personales, y hay una revisión automática que detecta si algo se filtró. Los datos sensibles viven cifrados y apartados. |
+| **Tumbar el servicio** | Miles de peticiones para agotar los recursos | Cada canal tiene su propio límite de tráfico, el sistema se escala solo cuando sube la carga y, si un cliente abusa, se lo frena sin afectar a los demás. |
+| **Escalar permisos** | Usar un permiso limitado para llegar a algo que no corresponde | El permiso se exige explícitamente en la operación, cada componente corre con los mínimos privilegios necesarios y no hay accesos amplios por comodidad. |
 
 ---
 
 ## 6. Resiliencia, Performance y Escalabilidad
 
-### 6.1 Rate Limiting por Partner/Canal
+### 6.1 Cómo se protege al sistema del abuso
 
-| Partner | Rate Limit | Ventana | Backend | Acción al exceder |
+Cada canal tiene su propio techo de peticiones por segundo. Cuando lo supera, se le
+responde diciendo cuándo reintentar, y los demás canales siguen operando sin
+enterarse.
+
+| Canal | Peticiones por segundo | Ventana | Dónde se controla | Qué recibe al excederse |
 |---|---|---|---|---|
-| `canal-ecommerce` | 100 req/s | 1s | Redis (Kong) | 429 + `Retry-After: 1` |
-| `canal-tienda` | 50 req/s | 1s | Redis (Kong) | 429 + `Retry-After: 1` |
-| `marketplace-a` | 50 req/s | 1s | Redis (Kong) | 429 + `Retry-After: 1` |
-| `marketplace-b` | 30 req/s | 1s | Redis (Kong) | 429 + `Retry-After: 1` |
-| `operador-cli` | 200 req/s | 1s | Redis (Kong) | 429 + `Retry-After: 1` |
-| `wms-service` | 500 req/s | 1s | Redis (Kong) | 429 + `Retry-After: 1` |
+| E-commerce | 100 | 1 segundo | Redis, desde la puerta de entrada | Un aviso de esperar un segundo antes de reintentar. |
+| Tienda física | 50 | 1 segundo | Redis | Igual: aviso de esperar un segundo. |
+| Marketplace A | 50 | 1 segundo | Redis | Igual. |
+| Marketplace B | 30 | 1 segundo | Redis | Igual. |
+| Operador interno | 200 | 1 segundo | Redis | Igual. |
+| WMS | 500 | 1 segundo | Redis | Igual, con un techo mucho más alto porque es un sistema, no una persona. |
 
-### 6.2 Cache: Dónde, Qué, TTL, Invalidación
+### 6.2 Qué se guarda en memoria y por cuánto tiempo
 
-| Cache | Ubicación | Qué almacena | TTL | Invalidación | Justificación |
-|---|---|---|---|---|---|
-| **Fresh** | Redis `stock:fresh:{sku}:{wh}` | StockLevel (available, reserved, lastUpdated) | 60s | TTL expiry | BR-STK-01: acierto si ≤ 60s |
-| **Stale** | Redis `stock:stale:{sku}:{wh}` | StockLevel (último valor conocido) | 3600s (1h) | TTL expiry | BR-STK-03: contingencia si ERP cae |
-| **Pricing** | Redis `price:{sku}:{channel}:{customer}` | Precio + descuentos | 300s (5 min) | TTL expiry + invalidación por evento `price.changed` | Precios cambian menos frecuentemente |
-| **JWKS** | Spring Boot cache | Claves públicas Keycloak | 15 min (auto-refresh) | Auto (Keycloak rotation) | Evitar resolución JWKS en cada request |
-| **Idempotency** | Redis `idempotency:{key}` | orderId + status | 86400s (24h) | TTL expiry | Deduplicación Create Order |
+Este es el mecanismo que evita que cada consulta llegue al ERP. Vale entender bien
+la diferencia entre los dos niveles de caché, porque es lo que permite seguir
+vendiendo cuando el ERP falla.
 
-### 6.3 Protección de Legados (Backpressure)
+| Qué se guarda | Dónde | Cuánto dura | Cómo se renueva | Por qué |
+|---|---|---|---|---|
+| **Stock reciente** | Redis | 1 minuto | Se descarta solo al vencer | Es el dato que se sirve normalmente. Un minuto de antigüedad es aceptable para mostrar disponibilidad. |
+| **Stock de respaldo** | Redis | 1 hora | Se descarta solo al vencer | Es el último valor que se conoció antes de que el ERP dejara de responder. Mostrar un stock de hace media hora es mejor que mostrar un error. |
+| **Precios** | Redis | 5 minutos | Al vencer, o antes si el precio cambió | Los precios se mueven mucho menos que el stock, así que pueden guardarse más tiempo. |
+| **Claves públicas de Keycloak** | Memoria del servicio | 15 minutos | Se renuevan solas | Evita consultar a Keycloak en cada petición solo para validar una firma. |
+| **Registro de duplicados** | Redis | 24 horas | Se descarta solo al vencer | Guarda qué operaciones ya se procesaron, para que un reintento no genere una orden doble. |
+
+### 6.3 Cómo se protege al ERP de nosotros mismos
+
+Una de las causas más comunes de caída en estos sistemas no es un atacante: es la
+propia aplicación insistiéndole a un servicio que ya está mal. Si el ERP se pone
+lento y nosotros seguimos mandando consultas, lo terminamos de tumbar. Los
+mecanismos siguientes existen para cortar antes de llegar a eso.
 
 ```mermaid
 flowchart LR
@@ -535,42 +620,56 @@ flowchart LR
     style SAP fill:#e3f2fd,stroke:#1565c0
 ```
 
-| Mecanismo | Configuración | Protege contra |
+| Mecanismo | Cómo está configurado | De qué nos protege |
 |---|---|---|
-| **Circuit Breaker** | Ventana 30 calls, 50% fallos, open 60s, half-open 5 | Cascada de fallos si SAP cae |
-| **Bulkhead** | 20 concurrent, 100ms wait | Exhaustión de threads si SAP lento |
-| **Timeout** | Connect 100ms, Read 250ms | Retención indefinida de requests |
-| **Connection Pool** | 20 max, 100ms pending acquire | Exhaustión de conexiones HTTP |
-| **Rate Limiting (Kong)** | 100 req/s por consumer | Flood de tráfico hacia app/SAP |
-| **HPA** | CPU 70%, 2-10 replicas | Scale automático bajo carga |
+| **Corte automático** | Si en 30 llamadas falla la mitad, se deja de llamar al ERP por 60 segundos. Luego se prueba con pocas llamadas antes de volver a confiar. | De arrastrar una caída del ERP hacia el resto del sistema. Mientras está cortado, se sirve el último valor conocido. |
+| **Límite de llamadas simultáneas** | Como máximo 20 consultas al ERP al mismo tiempo, con una espera de 100ms antes de rendirse. | De quedarnos sin recursos cuando el ERP responde lento. Si se supera el cupo, en lugar de encolar se sirve el respaldo. |
+| **Tiempo de espera** | 100ms para conectar y 250ms para recibir respuesta. | De que una petición quede colgada indefinidamente esperando a un sistema que no responde. |
+| **Cupo de conexiones** | 20 conexiones como máximo hacia el ERP. | De agotar las conexiones disponibles por acumulación de peticiones lentas. |
+| **Límite de tráfico** | 100 peticiones por segundo por canal. | De que un solo cliente sature la aplicación y, por su intermedio, al ERP. |
+| **Escalado automático** | Cuando el uso de procesador supera el 70%, se agregan instancias, de 2 hasta 10. | De quedarnos cortos de capacidad en un pico, y de pagar por capacidad ociosa el resto del tiempo. |
 
-### 6.4 Plan para Promos (Picos 10x)
+### 6.4 Qué hacemos cuando se viene una promo
 
-| Fase | Acción | Responsable |
+Una promo multiplica el tráfico por diez. No se improvisa el día del evento: hay
+una preparación previa y una revisión posterior.
+
+| Momento | Qué se hace | Quién |
 |---|---|---|
-| **Pre-Promo (T-7d)** | Pre-calentar caché (warm-up job), scale pods a 6 (min), verificar CB thresholds | DevOps + SRE |
-| **Pre-Promo (T-1d)** | Smoke test completo, verificar alarmas, revisar runbooks, on-call rotation | SRE |
-| **Durante Promo** | Monitoreo intensivo (dashboards, alertas, on-call dedicado), auto-scaling activo, rate limiting por consumer | SRE + On-Call |
-| **Post-Promo** | Análisis de métricas, post-mortem si incidentes, ajuste capacity planning | SRE + Tech Lead |
-| **Circuit Breaker** | Threshold 50% en 30 calls, half-open cada 60s, 5 calls en half-open | Configurado |
-| **Bulkhead** | 20 concurrent a SAP, wait 100ms, rechazo → stale-cache | Configurado |
-| **Cache** | Pre-calentar 10K SKUs más consultados, TTL fresh 60s | Job de warm-up |
-| **Rate Limit** | Kong 100 req/s por consumer, burst allowance 2x | Configurado |
+| **Una semana antes** | Se llena la caché con los productos más consultados para que las primeras consultas no lleguen al ERP, se sube el mínimo de instancias a 6 y se verifica que los cortes automáticos estén bien calibrados. | Equipo de operaciones |
+| **Un día antes** | Prueba completa del flujo de compra, verificación de que las alertas funcionen y revisión de los procedimientos por si algo falla. Se define quién queda de guardia. | Operaciones y guardia |
+| **Durante la promo** | Monitoreo continuo con gente dedicada mirando los tableros, escalado automático activo y límites por canal funcionando. | Guardia dedicada |
+| **Después** | Análisis de lo que pasó, reunión si hubo incidentes y ajuste de la capacidad para el siguiente evento. | Operaciones y líder técnico |
 
-### 6.5 Retries + DLQ
+Los números concretos con los que se entra a la promo: corte automático calibrado
+al 50% de fallos en 30 llamadas, cupo de 20 consultas simultáneas al ERP, caché
+precalentada con los 10 mil productos más consultados y límite de 100 peticiones
+por segundo por canal con margen para el doble de ráfaga.
 
-| Flujo | Retry Policy | DLQ | Justificación |
+### 6.5 Reintentos y qué pasa cuando algo falla definitivamente
+
+Reintentar es bueno hasta cierto punto. Un reintento sobre una operación que no es
+segura de repetir genera un cobro doble. Por eso cada flujo tiene su propia
+política, y todo lo que no se puede reintentar termina en una cola aparte para
+revisión manual en lugar de perderse.
+
+| Flujo | Cuántas veces se reintenta | Qué pasa si nunca funciona | Por qué |
 |---|---|---|---|
-| **SAP HTTP Call** | 3 retries, backoff exponencial (100ms, 200ms, 400ms), jitter | No DLQ (sync, fail-closed) | Timeout 250ms → no retries largos |
-| **Kafka Events (stock.updated)** | 3 retries, backoff 1s/2s/4s, jitter | DLQ `stock.updated.dlq` | At-least-once, idempotente |
-| **Webhooks (payment, shipment)** | 5 retries, backoff 5s/10s/20s/40s/80s, jitter | DLQ `webhook.{topic}.dlq` | Idempotente (Idempotency-Key) |
-| **Notifications (email/SMS)** | 3 retries, backoff 30s/60s/120s, jitter | DLQ `notification.dlq` + alerta | No crítico, puede perderse |
+| **Consulta al ERP** | 3 intentos con esperas crecientes de 100ms, 200ms y 400ms | No se reintenta más: se sirve el dato de respaldo. | Es una consulta que el usuario está esperando; no tiene sentido hacerlo esperar más de un segundo. |
+| **Avisos de cambio de stock** | 3 intentos con esperas de 1, 2 y 4 segundos | El aviso queda en una cola aparte para revisarlo a mano. | Son avisos que pueden repetirse sin problema, pero ninguno debería perderse en silencio. |
+| **Avisos de pago y despacho** | 5 intentos con esperas de 5, 10, 20, 40 y 80 segundos | Queda en cola aparte y se alerta. | Es el flujo más sensible: involucra dinero. Se insiste mucho, pero nunca se pierde el rastro. |
+| **Correos y mensajes al cliente** | 3 intentos con esperas de 30, 60 y 120 segundos | Queda registrado y se alerta, pero no bloquea nada. | Lo peor que puede pasar es que una notificación llegue tarde o no llegue; no se justifica insistir más. |
 
 ---
 
 ## 7. Observabilidad y Operación
 
-### 7.1 Logging: Campos Mínimos
+### 7.1 Qué se registra en cada operación
+
+Cuando algo falla, la pregunta del negocio es siempre la misma: qué pasó con esta
+compra. Para poder responderla sin adivinar, cada operación deja un registro
+estructurado con los mismos campos siempre, y todos llevan el mismo identificador
+que acompaña a la petición desde que entra hasta que sale.
 
 ```json
 {
@@ -596,99 +695,119 @@ flowchart LR
 }
 ```
 
-### 7.2 Métricas
+Lo relevante de este registro es el campo `correlationId`: es el mismo valor que
+viaja desde el canal, pasa por la puerta de entrada, llega al servicio y continúa
+hacia el ERP. Con ese identificador se reconstruye la historia completa de una
+compra en particular. Y algo igual de importante: no aparecen datos personales,
+solo identificadores internos.
 
-| # | Métrica | Tipo | Descripción | Alerta |
+### 7.2 Qué se mide
+
+No se mide todo lo que se puede medir, porque eso solo genera ruido. Se mide lo que
+permite responder tres preguntas: ¿está funcionando?, ¿está rápido?, ¿estamos
+cerca de un problema?
+
+| Qué se mide | Qué nos dice | Cuándo nos alerta |
+|---|---|---|
+| **Peticiones por resultado** | Cuántas peticiones llegan y cuántas terminan en error | Cuando más del 1% falla |
+| **Tiempo de respuesta** | Cuánto tarda el servicio, mirando no el promedio sino el percentil 95 | Cuando el 95% de las peticiones supera los 300ms |
+| **De dónde salió el dato** | Cuántas consultas se resolvieron por caché, cuántas fueron al ERP y cuántas se sirvieron de respaldo | Es informativo: muestra cuánto dependemos del ERP. |
+| **Efectividad de la caché** | Qué proporción de consultas se resolvió sin tocar el ERP | Cuando baja del 80%, señal de que algo se está saltando la caché |
+| **Estado del corte automático** | Si estamos hablando con el ERP o lo cortamos por fallos | Al instante, apenas se corta |
+| **Cupo de llamadas al ERP** | Cuántas consultas simultáneas quedan disponibles sobre el máximo de 20 | Cuando quedan menos de 5 |
+| **Tiempo de respuesta del ERP** | Cuánto tarda el ERP en contestar | Cuando su percentil 95 supera los 250ms |
+| **Peticiones sin dato disponible** | Cuántas veces hubo que negar el dato porque no había respaldo | Si ocurre aunque sea una vez |
+| **Memoria y procesos** | Salud general de la aplicación | Cuando la memoria supera el 80% o los procesos pasan de 200 |
+| **Peticiones frenadas por límite** | Cuántos clientes están siendo frenados | Cuando pasan de 100 por minuto |
+| **Productos más consultados** | Qué se está mirando más | Informativo: sirve para decidir qué precalentar |
+| **Verificación del identificador** | Que el identificador de seguimiento se propague bien | Si el control detecta alguna falla |
+
+### 7.3 Cómo se sigue una petición de punta a punta
+
+- **Identificador de correlación**: un valor único por petición que viaja desde el canal hasta el ERP y vuelve. Es la llave para armar la historia completa.
+- **Trazas distribuidas**: además del identificador, cada petición lleva marcas de tiempo intermedias, de modo que se ve en qué paso se demoró.
+- **Herramienta de visualización**: el mapa de servicios permite ver gráficamente por dónde pasó una petición y dónde se rompió.
+- **Conexión entre métricas y trazas**: desde un gráfico de latencia se puede saltar directo a la traza de una petición lenta concreta, sin tener que buscar a mano.
+- **Qué se guarda**: todas las peticiones que fallan, una de cada diez de las exitosas, y la mitad de las lentas. Guardar todo el detalle de todo sería carísimo y no aporta.
+
+### 7.4 Cuándo se avisa a alguien
+
+No todas las alertas son iguales. Unas despiertan a quien está de guardia porque el
+servicio está caído; otras solo dejan una nota para revisar durante el día.
+
+| Alerta | Qué la dispara | Cuánto debe sostenerse | Gravedad | Qué se hace |
 |---|---|---|---|---|
-| 1 | `http_server_requests_seconds_count` | Counter | Total requests por endpoint/status | Error rate > 1% |
-| 2 | `http_server_requests_seconds_bucket` | Histogram | Latencia por endpoint (p50/p95/p99) | p95 > 300ms |
-| 3 | `stock_queries_total{source=cache|erp|stale-cache}` | Counter | Distribución por origen del dato | — |
-| 4 | `stock_cache_hits_total` / `stock_cache_requests_total` | Counter | Cache hit ratio | < 80% |
-| 5 | `resilience4j_circuitbreaker_state{name="sapStockCircuitBreaker"}` | Gauge | Estado CB (0=CLOSED, 1=OPEN, 2=HALF_OPEN) | == 1 (OPEN) |
-| 6 | `resilience4j_bulkhead_available_concurrent_calls{name="sapStockBulkhead"}` | Gauge | Llamadas concurrentes disponibles (max 20) | < 5 |
-| 7 | `sap_client_latency_seconds` | Histogram | Latencia hacia SAP ERP | p95 > 250ms |
-| 8 | `stock_fail_closed_total` | Counter | Eventos 503 sin stale cache | > 0 |
-| 9 | `jvm_memory_used_bytes` / `jvm_threads_live` | Gauge | Memoria y threads JVM | Mem > 80%, Threads > 200 |
-| 10 | `kong_rate_limit_exceeded_total` | Counter | Rate limit exceeded por consumer | > 100/min |
-| 11 | `stock_queries_by_sku_total{sku}` | Counter | Top SKUs consultados | Top 10 análisis |
-| 12 | `correlation_id_propagation_check` | Counter | Verificación propagación correcta | != 0 (error) |
+| **Servicio sin responder** | Las verificaciones de salud fallan | 2 minutos | Crítica, despierta a guardia | Se revierte el último despliegue |
+| **Corte automático activado** | Se dejó de llamar al ERP por fallos | 1 minuto | Crítica, despierta a guardia | Se revisa el ERP y se espera su recuperación |
+| **Sin cupo hacia el ERP** | No quedan llamadas simultáneas disponibles | 2 minutos | Crítica, despierta a guardia | Se agregan instancias y se revisa la lentitud del ERP |
+| **Lentitud sostenida** | El 95% de las respuestas supera 500ms | 5 minutos | Crítica, despierta a guardia | Se revisa caché, ERP y procesador |
+| **Errores en subida** | Más del 5% de las peticiones falla | 3 minutos | Crítica, despierta a guardia | Se revisan los registros y se revierte si hubo despliegue |
+| **Lentitud moderada** | El 95% de las respuestas supera 300ms | 5 minutos | Advertencia, se revisa en horario | Se investiga antes de que escale |
+| **Caché perdiendo efectividad** | La proporción de aciertos baja del 80% | 10 minutos | Advertencia | Se revisa Redis y los tiempos de guardado |
+| **Redis exigido** | El procesador de Redis supera el 80% | 10 minutos | Advertencia | Se amplía Redis |
+| **Base de datos exigida** | El procesador de la base supera el 80% | 10 minutos | Advertencia | Se revisan las consultas y se ajusta la capacidad |
+| **Datos personales en registros** | Un control detecta un dato personal en los logs | Inmediato | Crítica | Se contiene el problema, se limpia y se investiga a fondo |
 
-### 7.3 Trazas Distribuidas y Correlación
+### 7.5 Qué hacer si el stock deja de responder
 
-- **Correlation-ID**: `X-Correlation-ID` (UUID v4) propagado: Client → Kong → App → Redis → SAP → Response
-- **W3C TraceContext**: `traceparent`/`tracestate` headers para OpenTelemetry
-- **Backend**: AWS X-Ray (Service Map, segment timeline, root cause analysis)
-- **Exemplars**: Prometheus métricas con `traceId` adjunto → click en gráfico → salta a trace
-- **Sampling**: 100% errors, 10% success, 50% slow requests (>300ms)
+Este es el procedimiento que sigue la persona de guardia cuando llega la alerta de
+que las consultas de stock están fallando.
 
-### 7.4 Alertas
-
-| # | Alarm ID | Métrica | Condición | Severidad | Acción |
-|---|---|---|---|---|---|
-| 1 | `CRIT-STOCK-AVAILABILITY` | Health checks failing | 2 min | CRITICAL | PagerDuty → Rollback |
-| 2 | `CRIT-STOCK-CB-OPEN` | CB state == OPEN | 1 min | CRITICAL | Verificar SAP, esperar auto-recovery |
-| 3 | `CRIT-STOCK-BULKHEAD-EXHAUSTED` | Bulkhead available == 0 | 2 min | CRITICAL | Scale pods, revisar SAP latency |
-| 4 | `CRIT-STOCK-LATENCY-P95` | p95 > 500ms | 5 min | CRITICAL | Verificar Redis/SAP/CPU, scale |
-| 5 | `CRIT-STOCK-ERROR-RATE` | 5xx > 5% | 3 min | CRITICAL | Revisar logs, rollback si deploy reciente |
-| 6 | `WARN-STOCK-LATENCY-P95` | p95 > 300ms | 5 min | WARNING | Investigar, prevenir escalada |
-| 7 | `WARN-STOCK-CACHE-HIT-RATIO` | Cache hit < 80% | 10 min | WARNING | Verificar Redis, TTLs |
-| 8 | `WARN-REDIS-CPU` | Redis CPU > 80% | 10 min | WARNING | Scale-up Redis |
-| 9 | `WARN-AURORA-CPU` | Aurora CPU > 80% | 10 min | WARNING | Revisar queries, scale ACU |
-| 10 | `WARN-STOCK-PII-LEAKAGE` | PII en logs (regex) | Inmediato | CRITICAL | Contención, limpieza, post-mortem |
-
-### 7.5 Runbook Breve: Qué hacer si stock/precio falla
-
-**Escenario: Stock no disponible (503)**
-
-1. **Verificar CB state**: `curl -k -H "Auth: Bearer $TOKEN" https://api.../actuator/prometheus | grep circuitbreaker_state`
-2. **Si CB OPEN**: SAP caído. App sirve `stale-cache` (si existe). Esperar auto-recovery (60s). Si no se recupera, revisar SAP.
-3. **Si CB CLOSED pero 503**: Sin stale cache. Verificar Redis (`kubectl exec redis-cli ping`), verificar SAP connectivity.
-4. **Mitigación inmediata**: Si SAP caído y sin stale → comunicar degradación, activar modo "consulta no disponible" en frontend.
-5. **Rollback**: Si deploy reciente → `kubectl rollout undo deployment/stock-price-adapter`
-6. **Escalar**: Si no resuelve en 15 min → Tech Lead → L3 → L4
+1. **Mirar si el corte automático está activo.** Es lo primero porque explica la mayoría de los casos: si está activo, el ERP es el problema y el sistema ya está sirviendo el dato de respaldo.
+2. **Si el corte está activo**, se espera su recuperación automática, que ocurre en menos de un minuto. Si no se recupera, el problema está en el ERP y hay que escalarlo.
+3. **Si el corte no está activo y aun así falla**, entonces no hay dato de respaldo. Se revisa que Redis responda y que haya conexión con el ERP.
+4. **Si el ERP está caído y no hay respaldo**, se comunica la degradación al negocio y se avisa en la pantalla del cliente que la consulta no está disponible, en vez de mostrar un error confuso.
+5. **Si hubo un despliegue reciente**, se revierte a la versión anterior: es la causa más probable cuando algo se rompe justo después de un cambio.
+6. **Si nada de lo anterior resuelve en 15 minutos**, se escala al líder técnico y de ahí a los niveles de soporte siguientes, con el identificador de una petición fallida para que puedan rastrearla.
 
 ---
 
-## 8. Plan de Implementación (Roadmap)
+## 8. Plan de Implementación
 
-### MVP (4-6 semanas) — Qué entregas y qué NO
+La estrategia es entregar valor desde la primera semana y crecer sobre algo que ya
+funciona, en lugar de construir todo y lanzarlo junto. Cada etapa deja el sistema
+usable.
 
-**QUÉ ENTREGA (MVP)**:
-- ✅ Stock API (`GET /v1/inventory/stock/{sku}`) con auth OAuth2/JWT
-- ✅ Caché dual Redis (fresh 60s + stale 1h)
-- ✅ Circuit Breaker + Bulkhead hacia SAP ERP
-- ✅ Rate limiting Kong (por canal)
-- ✅ Correlation-ID end-to-end
-- ✅ Observabilidad: Prometheus, JSON logs, health checks
-- ✅ Infra CDK: VPC, EKS, Redis, Aurora, Kong, Keycloak
-- ✅ CI/CD: GitHub Actions (lint, test, coverage, docker build)
-- ✅ Runbooks: CB, Bulkhead, Timeout ERP, Error 5xx, Health, Redis, Aurora, Latencia, PII
+### Primer entregable: 4 a 6 semanas
 
-**QUÉ NO ENTREGA (MVP)**:
-- ❌ Precios API (`GET /v1/pricing/{sku}`)
-- ❌ Orders API (`POST /v1/orders`, `GET /v1/orders/{id}`)
-- ❌ Webhooks/Eventos (Kafka, notificaciones)
-- ❌ Reserva de stock (WMS)
-- ❌ Multi-tenant completo (federación SAML)
-- ❌ Observabilidad completa (dashboards Grafana, X-Ray, anomaly detection)
-- ❌ Deploy automático (CD pipeline manual)
-- ❌ Feature flags platform (Spring Cloud Config)
+El primer entregable se concentra en un solo recorrido completo: consultar stock.
+Se elige ese porque es el que más golpea al ERP y el que más duele cuando se cae.
 
-### 3 Meses
+**Lo que queda funcionando:**
 
-| Mes | Entrega | Detalle |
+- Consulta de stock por producto y bodega, con autenticación por credenciales.
+- Guardado en memoria en dos niveles, para que la mayoría de las consultas no llegue al ERP.
+- Protección del ERP: corte automático, límite de llamadas simultáneas y respaldo con el último dato conocido.
+- Límite de tráfico por canal, para que un cliente no afecte a los demás.
+- Identificador de seguimiento de punta a punta.
+- Métricas, registros estructurados y verificaciones de salud.
+- Infraestructura como código: red, clúster, caché, base de datos, puerta de entrada e identidad.
+- Integración continua: revisión de estilo, pruebas, cobertura mínima y construcción de la imagen.
+- Procedimientos escritos para los fallos más probables.
+
+**Lo que queda deliberadamente fuera:** consulta de precios, creación y seguimiento
+de órdenes, avisos automáticos entre sistemas, reserva de stock en el WMS,
+separación de datos por marca, tableros de monitoreo completos, despliegue
+automático y plataforma de características experimentales.
+
+Decidir esto ahora es lo que hace que el plazo sea creíble. Un primer entregable
+que intenta abarcar todo termina sin terminar nada.
+
+### Siguientes tres meses
+
+| Mes | Qué se entrega | En qué consiste |
 |---|---|---|
-| **1** | **MVP Stock + Pricing** | Precios API, cache 5min, promos rules engine, validación staging |
-| **2** | **Orders + Payments** | Create Order (idempotencia), Saga (stock → pago → confirmación), webhooks pago |
-| **3** | **Events + Notifications** | Kafka topics (stock.changed, order.confirmed, payment.approved), consumers WMS/OMS/CRM, email/SMS |
+| **1** | Consulta de precios | Se agrega el segundo endpoint, con las reglas de promociones y descuentos viviendo en la capa nueva en lugar del ERP. La caché de precios dura más porque el dato cambia menos. |
+| **2** | Órdenes y pagos | Creación de órdenes con protección contra duplicados, coordinación de los pasos de compra con reversión si algo falla, y recepción de la confirmación de pago desde la pasarela. |
+| **3** | Avisos automáticos | Se introduce el bus de eventos para que stock, órdenes, pagos y despachos se avisen entre sí sin llamarse directamente, y se agregan las notificaciones al cliente. |
 
-### 6 Meses
+### De tres a seis meses
 
-| Mes | Entrega | Detalle |
+| Mes | Qué se entrega | En qué consiste |
 |---|---|---|
-| **4** | **Multi-Tenant Full** | Realm por marca, federación SAML/OIDC, user provisioning, RBAC por canal |
-| **5** | **Observabilidad Completa** | Grafana dashboards, X-Ray tracing, anomaly detection (CloudWatch + Prometheus), SLO reporting |
-| **6** | **Resiliencia Avanzada** | Chaos Engineering (Game Days), auto-scaling validation, DR cross-region (Aurora Global, Redis Global) |
+| **4** | Separación completa por marca | Un espacio de identidad propio por marca o región, con sus propios usuarios y permisos, y conexión con los sistemas de identidad que la empresa ya tenga (por ejemplo, directorio corporativo). |
+| **5** | Monitoreo completo | Tableros de operación, trazabilidad detallada de cada petición y detección automática de comportamientos anómalos, con reporte periódico del cumplimiento de los objetivos de servicio. |
+| **6** | Robustez ante desastres | Pruebas deliberadas de fallos controlados para verificar que el sistema responde como se espera, y capacidad de operar desde otra región si la principal queda fuera de servicio. |
 
 ---
 
@@ -718,19 +837,20 @@ flowchart LR
 
 ## Apéndice: Lo que ya está construido (Walking Skeleton técnico)
 
-Para referencia, el repositorio ya contiene un **Walking Skeleton funcional** del dominio Stock:
+Lo que sigue no es diseño sobre el papel: el repositorio contiene un primer
+incremento funcional del dominio de stock, con pruebas que lo verifican.
 
 | Componente | Estado | Detalle |
 |---|---|---|
-| `stock-price-adapter` | ✅ Funcional | Microservicio Kotlin + Spring Boot 3.2, `GET /v1/inventory/stock/{sku}` |
-| Clean Architecture | ✅ Verificada | ArchUnit 0 violaciones (Domain → Application → Infra) |
-| Resiliencia | ✅ Implementada | Circuit Breaker (30/50%/60s), Bulkhead (20/100ms), Stale-cache (1h), Fail-closed (503) |
-| Seguridad | ✅ Implementada | OAuth2/JWT Keycloak, scopes, rate limiting Kong, problem+json |
-| Observabilidad | ✅ Implementada en app | Prometheus (`/actuator/prometheus`), JSON logs, Correlation-ID, health probes. X-Ray tracing, dashboards y SLOs: **diseñados** (sección 7), pendientes de instrumentar en staging |
-| Infraestructura | ✅ CDK | VPC, EKS 1.29, Redis Multi-AZ, Aurora PG16, Kong, Keycloak, ESO |
-| CI/CD | ✅ GitHub Actions | Lint, Test, Coverage ≥80%, Docker ARM64 |
-| Tests | ✅ 59 tests | 14 suites, 95.3% cobertura, TDD real |
-| Runbooks | ✅ 9 CRITICAL | RB-001…RB-008 y RB-018 escritos; 9 WARNING (RB-009…RB-017) en roadmap |
+| Servicio de stock | Funcional | Microservicio Kotlin + Spring Boot 3.2 que expone `GET /v1/inventory/stock/{sku}` |
+| Organización del código | Verificada | Las reglas de dependencia entre capas se comprueban automáticamente en cada build; hoy no hay ninguna violación |
+| Resiliencia | Implementada | Corte automático (30 llamadas / 50% fallos / 60s), límite de 20 llamadas simultáneas, respaldo de una hora y negación explícita cuando no hay dato |
+| Seguridad | Implementada | Autenticación OAuth2/JWT con Keycloak, permisos por canal, límite de tráfico en Kong y errores en formato estándar |
+| Observabilidad | Implementada en la aplicación | Métricas en `/actuator/prometheus`, registros estructurados, identificador de correlación y verificaciones de salud. La trazabilidad detallada, los tableros y los objetivos de servicio están **diseñados** en la sección 7 y pendientes de instrumentar en el ambiente de pruebas |
+| Infraestructura | Como código | Red, clúster de Kubernetes, caché redundante, base de datos, puerta de entrada e identidad |
+| Integración continua | Activa | Revisión de estilo, pruebas, cobertura mínima exigida y construcción de la imagen |
+| Pruebas | 59 pruebas | 14 suites, 95.3% de cobertura de líneas |
+| Procedimientos de incidente | 9 escritos | Cubren los fallos críticos; los de gravedad menor quedan en el roadmap |
 
 > **Este Walking Skeleton es la base técnica** sobre la que se diseña la arquitectura completa documentada en este entregable. Demuestra que las decisiones arquitectónicas son viables y verificables en código.
 
