@@ -735,6 +735,3 @@ Para referencia, el repositorio ya contiene un **Walking Skeleton funcional** de
 > **Este Walking Skeleton es la base técnica** sobre la que se diseña la arquitectura completa documentada en este entregable. Demuestra que las decisiones arquitectónicas son viables y verificables en código.
 
 ---
-
-*Documento generado para la prueba técnica de Arquitecto/a Senior de Software & Soluciones — VortexBird*
-*Octubre 2026*

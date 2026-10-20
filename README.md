@@ -214,7 +214,3 @@ kubectl apply -k deploy/k8s/monitoring/
 # Load Tests (k6)
 k6 run load-test.js -e BASE_URL=https://api.andes-retail.example -e TOKEN=<jwt>
 ```
-
----
-
-> **Última actualización**: Octubre 2026 — Walking Skeleton v0.1.0
