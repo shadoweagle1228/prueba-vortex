@@ -36,6 +36,10 @@
 | RB-017 | Certificado Próximo a Expirar | WARNING | `WARN-CERT-EXPIRY` | < 24h |
 | RB-018 | PII Leakage en Logs | CRITICAL | `WARN-STOCK-PII-LEAKAGE` | < 15 min |
 
+**Estado**: escritos en este documento → RB-001…RB-008 y RB-018 (**los 9 de severidad CRITICAL**).
+En roadmap → RB-009…RB-017 (9 de severidad WARNING), que se documentan junto con la
+detección de anomalías en el mes 5 del plan de implementación (sección 8).
+
 ---
 
 ## RB-001: Circuit Breaker SAP Abierto
@@ -170,6 +174,103 @@ Latencia alta
 | SAP lento | CB protegerá, scale pods temporal |
 | CPU pods alto | Scale HPA manual, revisar memory leaks |
 | GC pauses | Aumentar heap, revisar allocation rate |
+
+---
+
+## RB-004: Error Rate 5xx Alto
+
+### Desencadenante
+- Alarma: `CRIT-STOCK-ERROR-RATE` (5xx > 5% por 3 min)
+- Métrica: `rate(http_server_requests_seconds_count{status=~"5.."}[3m]) / rate(http_server_requests_seconds_count[3m]) > 0.05`
+
+### Impacto
+- Los canales reciben respuestas 5xx (503 fail-closed o 500 inesperado)
+- Quema acelerada del error budget de `SLO-STOCK-AVAILABILITY` (99.9% → 43.2 min/mes)
+- Si es un deploy reciente, afecta a todas las réplicas al mismo tiempo
+
+### Diagnóstico Rápido (< 5 min)
+```bash
+# 1. ¿Es un deploy reciente?
+kubectl -n andes-retail rollout history deployment/stock-price-adapter
+
+# 2. ¿Son 503 diseñados (fail-closed) o 500 inesperados (bug)?
+kubectl logs -n andes-retail -l app=stock-price-adapter --tail=500 | grep -oE "stock-unavailable|Internal Server Error" | sort | uniq -c
+
+# 3. Estado de los mecanismos de protección
+curl -k -H "Authorization: Bearer $METRICS_TOKEN" https://api.../actuator/prometheus | grep -E "circuitbreaker_state|bulkhead_available|stock_fail_closed"
+
+# 4. Verificar respuesta completa (cuerpo y cabeceras)
+curl -i -H "Authorization: Bearer $TOKEN" https://api.../v1/inventory/stock/SKU-TEST
+```
+
+### Causas Comunes
+| Causa | Indicadores | Acción |
+|---|---|---|
+| ERP caído + sin stale-cache | CB OPEN + `stock_fail_closed_total` ↑ + Redis sin claves stale | Restaurar SAP (RB-001) |
+| Redis caído | Connection refused, cache hit = 0 | Ver RB-006 |
+| Bug en deploy reciente | 500 con stacktrace, rollout < 30 min | Rollback inmediato |
+| Keycloak / JWKS inaccesible | 401 masivo (no son 5xx del servidor) | Verificar Keycloak, JWKS cache 15 min |
+| Rate limiting por consumer | 429 en volumen | Revisar plugins Kong (RB-016) |
+
+### Resolución
+1. **Deploy reciente con causalidad clara** → `kubectl -n andes-retail rollout undo deployment/stock-price-adapter` (decidir en < 5 min; el análisis va después)
+2. **SAP caído** → RB-001; la app sirve `stale-cache` mientras tanto
+3. **Redis caído** → RB-006; la app degrada a consulta directa a SAP con CB activo
+4. **Sin causa identificable** → escalar a L3 con la salida de los 4 comandos de diagnóstico
+
+### Verificación Post-Resolución
+- Error rate 5xx < 0.1% durante 5 min
+- `stock_fail_closed_total` deja de incrementarse
+- Burn rate de `SLO-STOCK-AVAILABILITY` vuelve a 1x
+
+---
+
+## RB-005: Health Checks Fallando
+
+### Desencadenante
+- Alarma: `CRIT-STOCK-AVAILABILITY` (health checks failing por 2 min)
+- Kubernetes: pod `CrashLoopBackOff` o readiness probe fallando (>3 fallos seguidos)
+
+### Impacto
+- El pod sale del Service: no recibe tráfico
+- Si todas las réplicas fallan → servicio caído (violación directa del 99.9%)
+- Si 1 de 2 réplicas falla → capacidad a la mitad y el HPA puede no compensar a tiempo
+
+### Diagnóstico Rápido (< 5 min)
+```bash
+# 1. Estado de los pods
+kubectl -n andes-retail get pods -l app.kubernetes.io/name=stock-price-adapter
+
+# 2. ¿Liveness (fuerza restart) o readiness (saca del Service)?
+kubectl -n andes-retail describe pod <pod-fallido> | tail -30
+
+# 3. Logs del último arranque
+kubectl -n andes-retail logs <pod-fallido> --previous --tail=200
+
+# 4. Verificar el grupo de readiness desde dentro del pod
+kubectl -n andes-retail exec deploy/stock-price-adapter -- curl -s localhost:8080/actuator/health/readiness
+```
+
+### Causas Comunes
+| Causa | Indicadores | Acción |
+|---|---|---|
+| OOMKill | `lastState.terminated.reason: OOMKilled`, restarts ↑ | Subir memory limit (1Gi → 1.5Gi) y revisar allocation rate |
+| Arranque lento (JVM + JWKS) | Startup probe agotado (24 × 5s = 120s) | Aumentar `failureThreshold` del startup probe |
+| Secret inaccesible | Logs: `secret "stock-price-adapter-secrets" not found` | Verificar External Secrets Operator |
+| Imagen no desplegable | `ImagePullBackOff` | Verificar tag en ECR y política de pull |
+| Redis en readiness | Redis caído → readiness falla | Ver RB-006; por diseño Redis **no** está en el grupo de readiness |
+
+### Resolución
+1. **OOMKilled** → `kubectl -n andes-retail set resources deploy/stock-price-adapter --limits=memory=1500Mi` (sin revisar heap antes, es parche)
+2. **Arranque lento** → revisar tiempo de resolución JWKS y pool de conexiones
+3. **Secret** → `kubectl -n andes-retail get externalsecret` y verificar sync con Secrets Manager
+4. **Deploy reciente** → `kubectl -n andes-retail rollout undo deployment/stock-price-adapter`
+
+### Verificación Post-Resolución
+- 2/2 pods `Running` y `Ready`
+- `kubectl -n andes-retail get endpoints stock-price-adapter` con 2 IPs
+- `200` en `/actuator/health/readiness` y `/actuator/health/liveness`
+- Sin restarts nuevos en 10 min
 
 ---
 

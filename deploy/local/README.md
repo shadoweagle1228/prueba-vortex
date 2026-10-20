@@ -1,8 +1,11 @@
 # Entorno local (walking skeleton)
 
 Levanta el emisor OIDC real y la caché para poder ejecutar el slice
-`GET /v1/inventory/stock/{sku}` completo, con JWT firmado y rate limiting
-aplicado por la aplicación.
+`GET /v1/inventory/stock/{sku}` completo, con JWT firmado.
+
+> **Rate limiting**: en este entorno **no aplica** — no hay Kong en la ruta. El
+> límite por consumer (100 req/s para `canal-ecommerce`, 429 + `Retry-After`)
+> vive en `deploy/kong/` y se valida en staging (TC-08 del plan de carga).
 
 ```bash
 docker compose -f deploy/local/docker-compose.yml up -d

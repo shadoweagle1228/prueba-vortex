@@ -63,6 +63,16 @@ resilience4j:
         max-wait-duration: 100ms
 
 management:
+  # SLO-STOCK-LATENCY (sección 7 / slo-config.md): los queries de p95
+  # (histogram_quantile sobre http_server_requests_seconds_bucket) y el burn
+  # rate con le="0.3" solo devuelven datos si Micrometer exporta buckets. Con el
+  # default de Spring Boot no se exportan y el percentil sale vacío.
+  metrics:
+    distribution:
+      percentiles-histogram:
+        "http.server.requests": true
+      slo:
+        "http.server.requests": 100ms, 250ms, 300ms, 500ms
   endpoints:
     web:
       exposure:

@@ -18,8 +18,8 @@ Este repositorio contiene el **primer incremento real (Walking Skeleton)** de la
 | **Infraestructura (AWS CDK)** | VPC multi-AZ, EKS 1.29, ElastiCache Redis 7.1 Multi-AZ, Aurora PostgreSQL 16 Serverless v2, KMS, Secrets Manager | ✅ Sintetiza y despliega |
 | **Kubernetes (K8s)** | Deployment, HPA, NetworkPolicy, ServiceMonitor, PDB, Kong Ingress, Keycloak, External Secrets | ✅ Manifiestos listos |
 | **CI/CD** | GitHub Actions: lint (ktlint), tests, coverage gate (≥80%), build imagen ARM64, artifact upload | ✅ Pipeline verde |
-| **Observabilidad** | Golden Signals dashboards, 20+ alarmas, SLOs (9), distributed tracing (X-Ray), log queries, anomaly detection | ✅ Configurado |
-| **Runbooks & Incident Response** | 18 runbooks, escalation matrix (4 niveles), incident plan, post-mortem template | ✅ Listos para usar |
+| **Observabilidad** | Métricas Prometheus, JSON logs con correlation-id, health probes (implementados en el servicio); Golden Signals dashboards, 20+ alarmas, SLOs (9), log queries, anomaly detection (documentados en `aidlc/.../operation/observability-setup/`) | ✅ Implementado en app + documentado en ops |
+| **Runbooks & Incident Response** | 9 runbooks CRITICAL escritos (RB-001…RB-008, RB-018), 9 WARNING en roadmap (RB-009…RB-017), escalation matrix (4 niveles), incident plan, post-mortem template | ✅ Críticos listos |
 
 > **Nota importante**: Este es un *Walking Skeleton* — no es el sistema completo. Entrega el **hilo conductor** end-to-end para validar arquitectura, decisiones tecnológicas y procesos operativos *antes* de invertir en features completas (reservas, precios, multi-tenant, etc.).
 
@@ -147,8 +147,8 @@ flowchart LR
 - **Spot-ready**: Node groups configurados para Spot + tolerations
 - **Savings Plans ready**: Tagging strategy lista para comprar 1yr/3yr
 
-### 4. **Developer Experience**
-- **TDD real**: 58 tests, 95% cobertura, ArchUnit en CI
+### 6. **Developer Experience**
+- **TDD real**: 59 tests, 95% cobertura, ArchUnit en CI
 - **Local dev**: `docker-compose up` levanta Keycloak + Redis en 30s
 - **Contrato vivo**: OpenAPI generado desde código, validado en tests
 - **Debugging**: Correlation-ID en cada log, trace X-Ray, exemplars Prometheus→Trace

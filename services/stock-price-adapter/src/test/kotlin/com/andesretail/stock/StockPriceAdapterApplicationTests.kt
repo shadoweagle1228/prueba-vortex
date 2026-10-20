@@ -7,12 +7,15 @@ import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.springframework.beans.factory.annotation.Autowired
+import org.springframework.boot.test.autoconfigure.actuate.observability.AutoConfigureObservability
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.boot.test.context.TestConfiguration
 import org.springframework.context.annotation.Bean
+import org.springframework.security.core.authority.SimpleGrantedAuthority
 import org.springframework.security.oauth2.jwt.JwtDecoder
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt
 import org.springframework.test.web.servlet.MockMvc
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -28,6 +31,10 @@ import java.time.Duration
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+// Spring Boot desactiva export de métricas en los contextos de test (property
+// source "test"); sin esto, /actuator/prometheus ni el histograma de latencia
+// existen en el contexto y la regresión del SLI pasaría desapercibida.
+@AutoConfigureObservability
 class StockPriceAdapterApplicationTests {
 
     @Autowired
@@ -88,5 +95,29 @@ class StockPriceAdapterApplicationTests {
     @Test
     fun `las metricas exigen el scope metrics read`() {
         mockMvc.perform(get("/actuator/prometheus")).andExpect(status().isUnauthorized)
+    }
+
+    /**
+     * El SLI de latencia (`SLO-STOCK-LATENCY`, sección 7) se calcula en Prometheus con
+     * `histogram_quantile(0.95, rate(http_server_requests_seconds_bucket[5m]))`. Con el
+     * default de Spring Boot no se exportan buckets: la query devuelve vacío y el SLO
+     * se cumple "silenciosamente". Este test impide que esa regresión llegue a producción.
+     */
+    @Test
+    fun `la latencia se exporta como histograma para el SLI de p95`() {
+        val scrape = mockMvc.perform(
+            get("/actuator/prometheus")
+                .with(jwt().authorities(SimpleGrantedAuthority("SCOPE_metrics:read"))),
+        ).andExpect(status().isOk)
+            .andReturn().response.contentAsString
+
+        val buckets = scrape.lineSequence()
+            .filter { it.startsWith("http_server_requests_seconds_bucket") }
+            .toList()
+
+        assertThat(buckets).`as`("sin buckets exportados el p95 no se puede calcular").isNotEmpty
+        // Fronteras de `management.metrics.distribution.slo` (100/250/300/500 ms) que
+        // usan las queries de burn rate de `slo-config.md` (le="0.3").
+        assertThat(buckets.joinToString("\n")).contains("le=\"0.3\"")
     }
 }

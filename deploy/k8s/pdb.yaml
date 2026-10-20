@@ -1,0 +1,20 @@
+# PodDisruptionBudget: durante drains del nodo o upgrades del cluster nunca se
+# interrumpe a todas las réplicas a la vez. Es la pieza que sostiene el 99.9%
+# frente a eventos planificados de Kubernetes (evictions), junto al
+# RollingUpdate maxUnavailable: 0 del Deployment y al topologySpreadConstraints
+# por zona.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: stock-price-adapter
+  namespace: andes-retail
+  labels:
+    app.kubernetes.io/name: stock-price-adapter
+    app.kubernetes.io/part-of: andes-retail-interop
+spec:
+  # 2 réplicas en modo normal: siempre queda al menos 1 sirviendo tráfico.
+  # Con el HPA escalado a N >= 2 se mantiene la misma garantía.
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stock-price-adapter

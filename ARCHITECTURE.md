@@ -2,7 +2,7 @@
 
 > **Documento de entrega — Prueba Técnica Arquitecto/a Senior de Software & Soluciones**
 > **Empresa**: AndesRetail (retail multi-canal, ERP SAP, WMS, OMS, CRM)
-> **Autor**: Arquitecto/a Senior de Software & Soluciones
+> **Autor**: Edwin Ramirez
 > **Fecha**: Octubre 2026
 > **Versión**: 1.0
 
@@ -20,7 +20,7 @@ AndesRetail opera con integraciones punto a punto entre ERP SAP (on-prem), WMS, 
 - **Seguridad inconsistente** — cada integración tiene su propio auth
 - **Fragilidad** — cambios en un sistema rompen otros
 
-### Solución propuesta (7 bullets)
+### Solución propuesta
 
 1. **Capa de interoperabilidad centralizada** (API Gateway + Integration Layer) sobre AWS EKS que expone APIs estandarizadas hacia canales externos y orquesta flujos hacia legacy
 2. **Anti-Corruption Layer (ACL)** por sistema legacy (ERP, WMS, OMS, CRM) con adaptadores que normalizan datos y protegen con Circuit Breaker + Bulkhead
@@ -633,7 +633,7 @@ flowchart LR
 - ✅ Observabilidad: Prometheus, JSON logs, health checks
 - ✅ Infra CDK: VPC, EKS, Redis, Aurora, Kong, Keycloak
 - ✅ CI/CD: GitHub Actions (lint, test, coverage, docker build)
-- ✅ Runbooks: CB, Bulkhead, Redis, Aurora, Kong, Latencia
+- ✅ Runbooks: CB, Bulkhead, Timeout ERP, Error 5xx, Health, Redis, Aurora, Latencia, PII
 
 **QUÉ NO ENTREGA (MVP)**:
 - ❌ Precios API (`GET /v1/pricing/{sku}`)
@@ -691,7 +691,7 @@ flowchart LR
 
 ### 5. Cómo mantienes calidad sin volver el delivery lento
 
-> **Ejemplo concreto**: Quality gates en CI (ktlint, tests, coverage, ArchUnit) son **automáticos y bloqueantes**. Un developer no puede merge sin que pasen. Esto elimina revisiones manuales de estilo y calidad básica. Además, TDD (tests primero) reduce bugs en producción. El resultado: 58 tests, 95% cobertura, 0 violaciones ArchUnit, todo en CI. El delivery no se ralentiza porque los gates son automáticos, no manuales.
+> **Ejemplo concreto**: Quality gates en CI (ktlint, tests, coverage, ArchUnit) son **automáticos y bloqueantes**. Un developer no puede merge sin que pasen. Esto elimina revisiones manuales de estilo y calidad básica. Además, TDD (tests primero) reduce bugs en producción. El resultado: 59 tests, 95% cobertura, 0 violaciones ArchUnit, todo en CI. El delivery no se ralentiza porque los gates son automáticos, no manuales.
 
 **Técnica**: Automatizar quality gates (CI/CD), TDD real (tests primero), ArchUnit (arquitectura verificable), y no negociar umbrales (80% coverage mínimo).
 
@@ -707,11 +707,11 @@ Para referencia, el repositorio ya contiene un **Walking Skeleton funcional** de
 | Clean Architecture | ✅ Verificada | ArchUnit 0 violaciones (Domain → Application → Infra) |
 | Resiliencia | ✅ Implementada | Circuit Breaker (30/50%/60s), Bulkhead (20/100ms), Stale-cache (1h), Fail-closed (503) |
 | Seguridad | ✅ Implementada | OAuth2/JWT Keycloak, scopes, rate limiting Kong, problem+json |
-| Observabilidad | ✅ Implementada | Prometheus, X-Ray, JSON logs, Correlation-ID, SLOs |
+| Observabilidad | ✅ Implementada en app | Prometheus (`/actuator/prometheus`), JSON logs, Correlation-ID, health probes. X-Ray tracing, dashboards y SLOs: **diseñados** (sección 7), pendientes de instrumentar en staging |
 | Infraestructura | ✅ CDK | VPC, EKS 1.29, Redis Multi-AZ, Aurora PG16, Kong, Keycloak, ESO |
-| CI/CD | ✅ GitHub Actions | Lint, Test, Coverage ≥80%, Docker ARM64, CDK Synth |
-| Tests | ✅ 58 tests | 14 suites, 95.3% cobertura, TDD real |
-| Runbooks | ✅ 18 runbooks | Escalation matrix 4 niveles, post-mortem template |
+| CI/CD | ✅ GitHub Actions | Lint, Test, Coverage ≥80%, Docker ARM64 |
+| Tests | ✅ 59 tests | 14 suites, 95.3% cobertura, TDD real |
+| Runbooks | ✅ 9 CRITICAL | RB-001…RB-008 y RB-018 escritos; 9 WARNING (RB-009…RB-017) en roadmap |
 
 > **Este Walking Skeleton es la base técnica** sobre la que se diseña la arquitectura completa documentada en este entregable. Demuestra que las decisiones arquitectónicas son viables y verificables en código.
 
